@@ -8,7 +8,10 @@ import { BottomNav, SideNav } from './ui';
 // Onboarding
 import { LoginScreen, RegisterScreen, RoleSelectScreen, ForgotPasswordScreen, SplashScreen } from './screens/Onboarding';
 import Landing from './screens/Landing';
-import { liberarTurno } from './services/bookingService';
+import { loadCatalog } from './catalog';
+import { logoutRequest } from './backend';
+import { UNAUTHORIZED_EVENT } from './api';
+import { clearSession, getToken, SESSION_KEY_AUTH, SESSION_KEY_ROLE, SESSION_KEY_USER_NAME } from './session';
 
 // Booking
 import { BookStep1, BookStep2, BookStep3, BookStep4, BookSuccess } from './screens/Booking';
@@ -75,9 +78,6 @@ const PATH_TO_SCREEN: Record<string, Screen> = Object.fromEntries(
 PATH_TO_SCREEN['/admin/clientes'] = 'stylist-clients';
 
 const PROTECTED_PREFIXES = ['/cliente', '/admin', '/estilista'];
-const SESSION_KEY_ROLE = 'bb_role';
-const SESSION_KEY_AUTH = 'bb_auth';
-const SESSION_KEY_USER_NAME = 'bb_user_name';
 
 const INITIAL_BOOKING: BookingState = {
   serviceId: null,
@@ -92,16 +92,38 @@ export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Auth state — persisted to sessionStorage so F5 restores the session
+  // Auth state — persisted to sessionStorage so F5 restores the session. A session without a
+  // token (e.g. left over from the old simulated login) is not a session.
   const [isLoggedIn, setIsLoggedIn] = useState(() =>
-    sessionStorage.getItem(SESSION_KEY_AUTH) === 'true'
+    sessionStorage.getItem(SESSION_KEY_AUTH) === 'true' && getToken() !== null
   );
   const [role, setRole] = useState<UserRole>(() =>
     (sessionStorage.getItem(SESSION_KEY_ROLE) as UserRole) ?? 'client'
   );
   const [userName, setUserName] = useState(() =>
-    sessionStorage.getItem(SESSION_KEY_USER_NAME) ?? 'Juan García'
+    sessionStorage.getItem(SESSION_KEY_USER_NAME) ?? ''
   );
+
+  // The catalog (services and stylists) comes from the backend. The free hosting plan puts the
+  // server to sleep after 15 minutes without traffic, so the first load can take about a minute.
+  const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [catalogError, setCatalogError] = useState('');
+  const [slowStart, setSlowStart] = useState(false);
+
+  const loadAll = useCallback(() => {
+    setCatalogState('loading');
+    setSlowStart(false);
+    const slowTimer = window.setTimeout(() => setSlowStart(true), 4000);
+    loadCatalog()
+      .then(() => setCatalogState('ready'))
+      .catch((error: Error) => {
+        setCatalogError(error.message);
+        setCatalogState('error');
+      })
+      .finally(() => window.clearTimeout(slowTimer));
+  }, []);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
 
   // Ephemeral state — lost on F5 (by design for multi-step flows)
   const [booking, setBooking] = useState<BookingState>(INITIAL_BOOKING);
@@ -162,7 +184,18 @@ export default function App() {
   // ── Navigation helpers ──────────────────────────────────────────────────────
   const nav = (s: Screen) => navigate(SCREEN_TO_PATH[s]);
 
-  const handleLogin = (r: UserRole, name = 'Juan García') => {
+  // The backend answered 401 to a request that carried our token: the session is over.
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setIsLoggedIn(false);
+      setToastMessage('Tu sesión expiró. Inicia sesión de nuevo.');
+      navigate('/login', { replace: true });
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  }, [navigate]);
+
+  const handleLogin = (r: UserRole, name = '') => {
     setRole(r);
     setUserName(name);
     setIsLoggedIn(true);
@@ -175,6 +208,8 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    // Revoke the token on the server first (it needs the token), then forget the session locally.
+    void logoutRequest().catch(() => undefined).finally(() => clearSession());
     setIsLoggedIn(false);
     sessionStorage.removeItem(SESSION_KEY_AUTH);
     sessionStorage.removeItem(SESSION_KEY_ROLE);
@@ -257,7 +292,7 @@ export default function App() {
       case 'register':
         return (
           <RegisterScreen
-            onRegister={() => handleLogin('client')}
+            onRegister={(registeredRole, name) => handleLogin(registeredRole, name)}
             onLogin={() => nav('login')}
             onBack={() => nav('splash')}
           />
@@ -320,19 +355,13 @@ export default function App() {
             serviceId={booking.serviceId}
             stylistId={booking.stylistId}
             initialDate={booking.date}
-            onNext={(date, time, hold) => {
-              setBooking(b => ({
-                ...b,
-                stylistId: hold.stylistId,
-                date,
-                time,
-                holdId: hold.id,
-                holdExpiresAt: hold.expiresAt,
-              }));
+            onNext={(date, time) => {
+              // stylistId stays as the user chose it (a stylist or "any"): with "any" the backend
+              // assigns whoever is free at confirmation time.
+              setBooking(b => ({ ...b, date, time }));
               nav('book-4');
             }}
             onBack={() => nav('book-2')}
-            onConflict={message => setToastMessage(message)}
           />
         );
 
@@ -343,20 +372,17 @@ export default function App() {
         return (
           <BookStep4
             booking={booking}
-            onConfirm={code => {
+            onConfirm={(code, assignedStylistId) => {
               setReservationCode(code);
+              // Show the stylist the backend actually assigned (matters for "any").
+              setBooking(current => ({ ...current, stylistId: assignedStylistId }));
               nav('book-success');
             }}
-            onBack={() => {
-              if (booking.holdId) void liberarTurno(booking.holdId);
-              setBooking(current => ({ ...current, holdId: undefined, holdExpiresAt: undefined }));
-              nav('book-3');
-            }}
+            onBack={() => nav('book-3')}
             onConflict={message => setToastMessage(message)}
             onChooseNewTime={() => {
-              if (booking.holdId) void liberarTurno(booking.holdId);
               flushSync(() => {
-                setBooking({ ...booking, time: null, holdId: undefined, holdExpiresAt: undefined });
+                setBooking({ ...booking, time: null });
                 setReservationCode(null);
               });
               nav('book-3');
@@ -445,6 +471,10 @@ export default function App() {
 
   // ── Layout wrappers ────────────────────────────────────────────────────────
 
+  if (catalogState !== 'ready') {
+    return <CatalogGate state={catalogState} slowStart={slowStart} message={catalogError} onRetry={loadAll} />;
+  }
+
   if (isAdminOrStylist) {
     return (
       <div className="flex h-full bg-[#FBF3E9]">
@@ -479,6 +509,45 @@ export default function App() {
     <div className="h-full bg-[#FBF3E9] overflow-hidden">
       {renderScreen()}
       <GlobalToast message={toastMessage} onDismiss={dismissToast} />
+    </div>
+  );
+}
+
+// Shown while the catalog loads (and if it can't). On the free hosting plan the server sleeps when
+// idle, so the first visit can take around a minute: say so instead of showing a blank page.
+function CatalogGate({ state, slowStart, message, onRetry }: {
+  state: 'loading' | 'error';
+  slowStart: boolean;
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center bg-[#FBF3E9] px-8 text-center">
+      <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#E8734A] text-3xl text-white">✂</div>
+      <h1 className="font-display text-2xl font-black text-[#6B4226]">BarberBook</h1>
+      {state === 'loading' ? (
+        <div role="status" className="mt-4 max-w-sm">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-[#EDD8BC] border-t-[#E8734A]" aria-hidden="true" />
+          <p className="mt-4 text-sm font-semibold text-[#6B4226]">
+            {slowStart ? 'Despertando el servidor…' : 'Cargando…'}
+          </p>
+          {slowStart && (
+            <p className="mt-1 text-xs leading-relaxed text-[#A67850]">
+              Si nadie lo usó en un rato, la primera vez puede tardar hasta un minuto. No cierres esta página.
+            </p>
+          )}
+        </div>
+      ) : (
+        <div role="alert" className="mt-4 max-w-sm">
+          <p className="text-sm font-semibold text-red-700">{message}</p>
+          <button
+            onClick={onRetry}
+            className="mt-4 rounded-2xl bg-[#E8734A] px-6 py-3 text-sm font-bold text-white hover:bg-[#d4623a]"
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
     </div>
   );
 }

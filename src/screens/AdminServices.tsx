@@ -8,7 +8,7 @@ import {
   type Service,
   type ServiceInput,
   type ServiceStatus,
-} from "../services/service-catalog.mock";
+} from "../services/service-catalog";
 import ServiceFormModal from "./admin-services/ServiceFormModal";
 
 type ServiceFilter = "TODOS" | ServiceStatus;

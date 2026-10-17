@@ -5,7 +5,7 @@ import {
   type Service,
   type ServiceInput,
   type ServiceInputErrors,
-} from "../../services/service-catalog.mock";
+} from "../../services/service-catalog";
 
 interface ServiceFormModalProps {
   service: Service | null;

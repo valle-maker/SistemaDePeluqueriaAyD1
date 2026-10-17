@@ -10,14 +10,10 @@ import {
   confirmReservation,
   getAvailabilityForMonth,
   getDisponibilidad,
-  liberarTurno,
-  reservarTurno,
   type AvailableSlot,
-  type SlotHold,
 } from '../services/bookingService';
 import { SuccessIllustration, MemphisStylistAvatar } from '../illustrations';
 import { Button, BookingProgress, Card, PopularBadge, StarRating, PageHeader, ServicePhoto } from '../ui';
-import { LANDING_STYLIST_IMAGES } from '../mockData';
 
 // ─── STEP 1 — Choose Service ───────────────────────────────────────────────────
 
@@ -192,14 +188,18 @@ export function BookStep2({ serviceId, onNext, onBack }: {
                 <div className={`text-sm font-medium ${selected === stylist.id ? 'text-white/80' : 'text-[#A67850]'}`}>
                   {stylist.specialty}
                 </div>
-                <div className="mt-1 flex items-center gap-1">
-                  <span className={`text-xs font-bold ${selected === stylist.id ? 'text-white' : 'text-[#F2A950]'}`}>
-                    ★ {stylist.rating.toFixed(1)}
-                  </span>
-                  <span className={`text-xs ${selected === stylist.id ? 'text-white/60' : 'text-[#C8A88A]'}`}>
-                    ({stylist.reviewCount} reseñas)
-                  </span>
-                </div>
+                {stylist.rating > 0 && (
+                  <div className="mt-1 flex items-center gap-1">
+                    <span className={`text-xs font-bold ${selected === stylist.id ? 'text-white' : 'text-[#F2A950]'}`}>
+                      ★ {stylist.rating.toFixed(1)}
+                    </span>
+                    {stylist.reviewCount > 0 && (
+                      <span className={`text-xs ${selected === stylist.id ? 'text-white/60' : 'text-[#C8A88A]'}`}>
+                        ({stylist.reviewCount} reseñas)
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               {selected === stylist.id && (
                 <div className="w-6 h-6 rounded-full bg-white/30 flex items-center justify-center flex-shrink-0">
@@ -373,84 +373,25 @@ function Calendar({ serviceId, stylistId, selected, onSelect }: {
   );
 }
 
-export function BookStep3({ serviceId, stylistId, initialDate, onNext, onBack, onConflict }: {
+export function BookStep3({ serviceId, stylistId, initialDate, onNext, onBack }: {
   serviceId: string;
   stylistId: string;
   initialDate?: string | null;
-  onNext: (date: string, time: string, hold: SlotHold) => void;
+  onNext: (date: string, time: string, proposedStylistId: string) => void;
   onBack: () => void;
-  onConflict: (message: string) => void;
 }) {
   const [selectedDate, setSelectedDate] = useState<string | null>(initialDate ?? null);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
   const [availability, setAvailability] = useState<
-    | { status: 'idle' | 'loading'; slots: AvailableSlot[] }
-    | { status: 'success'; slots: AvailableSlot[] }
+    | { status: 'idle' | 'loading'; slots: AvailableSlot[]; message?: string | null }
+    | { status: 'success'; slots: AvailableSlot[]; message: string | null }
     | { status: 'error'; slots: AvailableSlot[]; message: string }
   >({ status: 'idle', slots: [] });
   const [retryCount, setRetryCount] = useState(0);
-  const [hold, setHold] = useState<SlotHold | null>(null);
-  const [holdStatus, setHoldStatus] = useState<'idle' | 'loading' | 'error'>('idle');
-  const [holdMessage, setHoldMessage] = useState<string | null>(null);
-  const [conflictMessage, setConflictMessage] = useState<string | null>(null);
-  const [remainingMs, setRemainingMs] = useState(0);
-  const requestVersion = useRef(0);
-  const activeHold = useRef<SlotHold | null>(null);
-  const transferredHold = useRef(false);
   const service = getService(serviceId);
 
-  const releaseCurrentHold = async () => {
-    const current = activeHold.current;
-    activeHold.current = null;
-    setHold(null);
-    if (current) await liberarTurno(current.id);
-  };
-
-  const selectSlot = async (slot: AvailableSlot) => {
-    if (hold?.time === slot.time && hold.stylistId === slot.stylistId) return;
-    const currentVersion = ++requestVersion.current;
-    setSelectedTime(slot.time);
-    setHoldStatus('loading');
-    setHoldMessage(null);
-
-    try {
-      await releaseCurrentHold();
-      if (!selectedDate || currentVersion !== requestVersion.current) return;
-      const nextHold = await reservarTurno({
-        serviceId,
-        stylistId: slot.stylistId,
-        date: selectedDate,
-        time: slot.time,
-      });
-      if (currentVersion !== requestVersion.current) {
-        await liberarTurno(nextHold.id);
-        return;
-      }
-      activeHold.current = nextHold;
-      setHold(nextHold);
-      setHoldStatus('idle');
-    } catch (error) {
-      if (currentVersion !== requestVersion.current) return;
-      setSelectedTime(null);
-      setHoldStatus('error');
-      const message = error instanceof Error
-        ? error.message
-        : 'No se pudo bloquear el horario. Inténtalo de nuevo.';
-      setHoldMessage(message);
-      if (error instanceof BookingServiceError && error.status === 409) {
-        onConflict(error.response.message);
-        setConflictMessage(error.response.message);
-      }
-      setRetryCount(count => count + 1);
-    }
-  };
-
-  useEffect(() => () => {
-    if (!transferredHold.current && activeHold.current) {
-      void liberarTurno(activeHold.current.id);
-    }
-  }, []);
-
+  // Free start times for the chosen day (HU-12). Nothing is blocked here: the slot is booked in
+  // one step on the next screen, where the server also re-checks that it is still free.
   useEffect(() => {
     if (!selectedDate) {
       setAvailability({ status: 'idle', slots: [] });
@@ -458,17 +399,11 @@ export function BookStep3({ serviceId, stylistId, initialDate, onNext, onBack, o
     }
     let active = true;
     setAvailability({ status: 'loading', slots: [] });
-    getDisponibilidad({ serviceId, stylistId, date: selectedDate, holdId: hold?.id })
+    getDisponibilidad({ serviceId, stylistId, date: selectedDate })
       .then(response => {
         if (!active) return;
-        setAvailability({ status: 'success', slots: response.slots });
-        setSelectedTime(time =>
-          response.slots.some(slot =>
-            slot.time === time && (!hold || slot.stylistId === hold.stylistId)
-          )
-            ? time
-            : null
-        );
+        setAvailability({ status: 'success', slots: response.slots, message: response.message });
+        setSelectedTime(time => (response.slots.some(slot => slot.time === time) ? time : null));
       })
       .catch(error => {
         if (!active) return;
@@ -479,48 +414,14 @@ export function BookStep3({ serviceId, stylistId, initialDate, onNext, onBack, o
         });
       });
     return () => { active = false; };
-  }, [hold?.id, hold?.stylistId, retryCount, serviceId, selectedDate, stylistId]);
+  }, [retryCount, serviceId, selectedDate, stylistId]);
 
-  useEffect(() => {
-    if (!selectedDate || hold) return;
-    const timer = window.setInterval(() => setRetryCount(count => count + 1), 30_000);
-    return () => window.clearInterval(timer);
-  }, [hold, selectedDate]);
-
-  useEffect(() => {
-    if (!hold) {
-      setRemainingMs(0);
-      return;
-    }
-    const update = () => {
-      const remaining = hold.expiresAt - Date.now();
-      setRemainingMs(Math.max(0, remaining));
-      if (remaining <= 0) {
-        activeHold.current = null;
-        setHold(null);
-        setSelectedTime(null);
-        setHoldStatus('error');
-        setHoldMessage('El bloqueo venció. Selecciona nuevamente un horario.');
-        setRetryCount(count => count + 1);
-      }
-    };
-    update();
-    const timer = window.setInterval(update, 1000);
-    return () => window.clearInterval(timer);
-  }, [hold]);
-
-  const selectedSlot = availability.slots.find(
-    slot => slot.time === selectedTime && slot.stylistId === hold?.stylistId,
-  );
+  const selectedSlot = availability.slots.find(slot => slot.time === selectedTime);
 
   return (
     <div className="isolate flex h-full flex-col bg-[#FBF3E9]">
       <div className="bg-white px-5 pt-10 pb-4 shadow-[0_2px_12px_rgba(107,66,38,0.06)]">
-        <PageHeader title="Elige el Horario" subtitle={service?.name} onBack={() => {
-          requestVersion.current += 1;
-          void releaseCurrentHold();
-          onBack();
-        }} />
+        <PageHeader title="Elige el Horario" subtitle={service?.name} onBack={onBack} />
         <div className="px-5 pt-2 pb-4">
           <BookingProgress step={3} />
         </div>
@@ -542,12 +443,8 @@ export function BookStep3({ serviceId, stylistId, initialDate, onNext, onBack, o
           stylistId={stylistId}
           selected={selectedDate}
           onSelect={date => {
-            requestVersion.current += 1;
-            void releaseCurrentHold();
             setSelectedDate(date);
             setSelectedTime(null);
-            setHoldStatus('idle');
-            setHoldMessage(null);
           }}
         />
 
@@ -578,7 +475,7 @@ export function BookStep3({ serviceId, stylistId, initialDate, onNext, onBack, o
             )}
             {availability.status === 'success' && availability.slots.length === 0 && (
               <p className="rounded-2xl bg-white p-4 text-center text-sm font-medium text-[#A67850]">
-                No hay turnos disponibles para esta fecha. Intenta con otro barbero o selecciona el siguiente día disponible.
+                {availability.message ?? 'No hay turnos disponibles para esta fecha. Intenta con otro barbero o con otro día.'}
               </p>
             )}
             {availability.status === 'success' && availability.slots.length > 0 && (
@@ -586,32 +483,20 @@ export function BookStep3({ serviceId, stylistId, initialDate, onNext, onBack, o
                 {availability.slots.map(slot => (
                   <button
                     key={`${slot.time}-${slot.stylistId}`}
-                    onClick={() => void selectSlot(slot)}
-                    disabled={holdStatus === 'loading'}
+                    onClick={() => setSelectedTime(slot.time)}
                     className={`relative min-h-10 rounded-2xl border-2 px-2 py-2 text-sm font-bold transition-all ${
-                      selectedSlot?.time === slot.time && selectedSlot.stylistId === slot.stylistId
+                      selectedSlot?.time === slot.time
                         ? 'z-10 border-[#E8734A] bg-[#E8734A] text-white shadow-[0_4px_12px_rgba(232,115,74,0.28)]'
                         : 'z-[1] border-[#E8734A] bg-white text-[#E8734A] hover:bg-[#FBF3E9]'
-                    } ${holdStatus === 'loading' ? 'cursor-wait opacity-60' : ''}`}
+                    }`}
                   >
                     {slot.time}
                   </button>
                 ))}
               </div>
             )}
-            {holdStatus === 'loading' && (
-              <p className="mt-3 text-center text-sm text-[#A67850]" role="status">Bloqueando horario...</p>
-            )}
-            {holdStatus === 'error' && holdMessage && (
-              <p className="mt-3 rounded-xl bg-red-50 p-3 text-center text-sm text-red-700" role="alert">{holdMessage}</p>
-            )}
-            {hold && (
-              <p className="mt-3 text-center text-sm font-semibold text-[#4A7C59]" role="status">
-                Turno bloqueado por {Math.floor(remainingMs / 60_000)}:{String(Math.floor((remainingMs % 60_000) / 1000)).padStart(2, '0')} min
-              </p>
-            )}
             {selectedSlot && stylistId === 'any' && (
-              <p className="mt-2 text-center text-xs text-[#A67850]">
+              <p className="mt-3 text-center text-xs text-[#A67850]">
                 Estilista asignado: {getStylist(selectedSlot.stylistId)?.name}
               </p>
             )}
@@ -640,37 +525,17 @@ export function BookStep3({ serviceId, stylistId, initialDate, onNext, onBack, o
         )}
         <Button
           onClick={() => {
-            if (!selectedDate || !selectedSlot || !hold) return;
-            transferredHold.current = true;
-            onNext(selectedDate, selectedSlot.time, hold);
+            if (!selectedDate || !selectedSlot) return;
+            onNext(selectedDate, selectedSlot.time, selectedSlot.stylistId);
           }}
           variant="primary"
           size="lg"
           fullWidth
-          disabled={!selectedDate || !selectedSlot || !hold || holdStatus !== 'idle' || availability.status !== 'success'}
+          disabled={!selectedDate || !selectedSlot || availability.status !== 'success'}
         >
-          {selectedDate && selectedSlot && hold ? 'Revisar reserva →' : 'Elige fecha y hora'}
+          {selectedDate && selectedSlot ? 'Revisar reserva →' : 'Elige fecha y hora'}
         </Button>
       </div>
-      {conflictMessage && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-[#24160F]/55 p-5" role="presentation">
-          <div className="w-full max-w-md rounded-3xl border border-[#F2A950]/50 bg-white p-6 text-center shadow-2xl" role="alertdialog" aria-modal="true" aria-labelledby="booking-conflict-title">
-            <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#FFF3CD] text-3xl text-[#A66A16]" aria-hidden="true">!</span>
-            <h2 id="booking-conflict-title" className="mt-4 font-display text-xl font-black text-[#6B4226]">Turno no disponible</h2>
-            <p className="mt-2 text-sm leading-relaxed text-[#8B6A52]">{conflictMessage}</p>
-            <Button
-              onClick={() => {
-                setConflictMessage(null);
-                setSelectedTime(null);
-              }}
-              size="lg"
-              fullWidth
-            >
-              Elegir nuevo horario
-            </Button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -679,7 +544,7 @@ export function BookStep3({ serviceId, stylistId, initialDate, onNext, onBack, o
 
 export function BookStep4({ booking, onConfirm, onBack, onConflict, onChooseNewTime }: {
   booking: BookingState;
-  onConfirm: (reservationCode: string) => void;
+  onConfirm: (reservationCode: string, stylistId: string) => void;
   onBack: () => void;
   onConflict: (message: string) => void;
   onChooseNewTime: () => void;
@@ -688,26 +553,13 @@ export function BookStep4({ booking, onConfirm, onBack, onConflict, onChooseNewT
   const [confirmationError, setConfirmationError] = useState<string | null>(null);
   const [conflictMessage, setConflictMessage] = useState<string | null>(null);
   const confirming = useRef(false);
-  const [remainingMs, setRemainingMs] = useState(
-    Math.max(0, (booking.holdExpiresAt ?? 0) - Date.now()),
-  );
   const service = getService(booking.serviceId!);
   const stylist = booking.stylistId === 'any' ? null : getStylist(booking.stylistId!);
 
-  useEffect(() => {
-    if (!booking.holdExpiresAt) return;
-    const updateRemaining = () => setRemainingMs(Math.max(0, booking.holdExpiresAt! - Date.now()));
-    updateRemaining();
-    const timer = window.setInterval(updateRemaining, 1000);
-    return () => window.clearInterval(timer);
-  }, [booking.holdExpiresAt]);
-
+  // HU-13: the slot is booked here, in one step. If another client took it a moment earlier the
+  // backend answers 409 and nothing is created.
   const handleConfirm = async () => {
     if (confirming.current) return;
-    if (!booking.holdId || remainingMs <= 0) {
-      setConfirmationError('El bloqueo venció. Regresa y selecciona nuevamente un horario.');
-      return;
-    }
     confirming.current = true;
     setLoading(true);
     setConfirmationError(null);
@@ -718,7 +570,7 @@ export function BookStep4({ booking, onConfirm, onBack, onConflict, onChooseNewT
         fecha: booking.date!,
         horaInicio: booking.time!,
       });
-      onConfirm(confirmation.reservationCode);
+      onConfirm(confirmation.reservationCode, confirmation.stylistId);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo confirmar la reserva.';
       setConfirmationError(message);
@@ -754,13 +606,6 @@ export function BookStep4({ booking, onConfirm, onBack, onConflict, onChooseNewT
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-5 pb-36">
-        <p className={`mb-4 rounded-2xl p-3 text-center text-sm font-semibold ${
-          remainingMs > 0 ? 'bg-[#EAF2E3] text-[#4A7C59]' : 'bg-red-50 text-red-700'
-        }`} role="status">
-          {remainingMs > 0
-            ? `Turno bloqueado durante ${Math.floor(remainingMs / 60_000)}:${String(Math.floor((remainingMs % 60_000) / 1000)).padStart(2, '0')} min`
-            : 'El bloqueo temporal venció.'}
-        </p>
         {confirmationError && (
           <p className="mb-4 rounded-2xl bg-red-50 p-3 text-center text-sm text-red-700" role="alert">
             {confirmationError}
@@ -810,7 +655,7 @@ export function BookStep4({ booking, onConfirm, onBack, onConflict, onChooseNewT
                 </div>
                 {stylist && (
                   <div className="mt-1 flex items-center gap-2 text-xs text-[#A67850]">
-                    <img src={LANDING_STYLIST_IMAGES[stylist.id]} alt="" className="h-8 w-8 rounded-full object-cover" />
+                    <MemphisStylistAvatar name={stylist.name} color={stylist.color} size={32} />
                     <span>{stylist.specialty}</span>
                   </div>
                 )}
@@ -859,7 +704,7 @@ export function BookStep4({ booking, onConfirm, onBack, onConflict, onChooseNewT
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-[#F5E6D3] p-5 pb-safe">
-        <Button onClick={() => void handleConfirm()} variant="primary" size="lg" fullWidth disabled={loading || !booking.holdId || remainingMs <= 0}>
+        <Button onClick={() => void handleConfirm()} variant="primary" size="lg" fullWidth disabled={loading}>
           {loading ? (
             <span className="flex items-center gap-2">
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
@@ -970,7 +815,7 @@ export function BookSuccess({ booking, reservationCode, onGoToAppointments, onGo
         {/* Confirmation number */}
         <div className="flex items-center justify-center gap-2 mb-6 p-3 bg-white rounded-2xl border-2 border-dashed border-[#EDD8BC]">
           <span className="text-sm text-[#A67850]">Nº de reserva:</span>
-          <span className="font-black text-[#E8734A] text-sm tracking-widest">#{reservationCode}</span>
+          <span className="font-black text-[#E8734A] text-sm tracking-widest">{reservationCode.startsWith('#') ? reservationCode : `#${reservationCode}`}</span>
         </div>
         <p className="mb-6 text-center text-xs leading-relaxed text-[#8B6A52]">
           Hemos enviado los detalles de tu cita y la dirección a tu correo electrónico.

@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { APPOINTMENTS, SERVICES, STYLISTS, getService, getStylist, formatPrice, CATEGORY_CONFIG, STATUS_CONFIG } from '../data';
 import { Card, StatusBadge, Button, PageHeader, Input } from '../ui';
 import { MemphisStylistAvatar } from '../illustrations';
+import { adminCreateStylist, type ScheduleEntryInput } from '../backend';
+import { loadCatalog } from '../catalog';
+import { ApiError } from '../api';
 
 // ─── DASHBOARD ─────────────────────────────────────────────────────────────────
 
@@ -271,6 +274,10 @@ type AddedStylist = {
 
 const NEW_STYLIST_COLORS = ['#7B5EA7', '#2E86AB', '#C97D4E', '#4A7C59', '#C45C4C'];
 const ALL_DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+const DAY_TO_API: Record<string, ScheduleEntryInput['dayOfWeek']> = {
+  Lunes: 'MONDAY', Martes: 'TUESDAY', 'Miércoles': 'WEDNESDAY', Jueves: 'THURSDAY',
+  Viernes: 'FRIDAY', 'Sábado': 'SATURDAY', Domingo: 'SUNDAY',
+};
 
 export function AdminTeam({ onBack }: { onBack: () => void }) {
   // ── invite form state ──
@@ -287,6 +294,8 @@ export function AdminTeam({ onBack }: { onBack: () => void }) {
     ALL_DAYS.map(d => ({ day: d, slots: 'Libre' }))
   );
   const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteError, setInviteError] = useState('');
+  const [, setRefreshTick] = useState(0); // re-renders the team list after the catalog is reloaded
 
   // ── team state ──
   const [addedStylists, setAddedStylists] = useState<AddedStylist[]>([]);
@@ -330,57 +339,62 @@ export function AdminTeam({ onBack }: { onBack: () => void }) {
     setInviteStep('form');
   }
 
-  function handleInvite() {
-    if (!inviteName.trim() || !inviteEmail.trim() || !invitePhoto) {
-      if (!invitePhoto) setInvitePhotoError('La foto del estilista es obligatoria.');
-      return;
-    }
-    setInviteLoading(true);
-    setTimeout(() => {
-      const newId = `added-${Date.now()}`;
-      const color = NEW_STYLIST_COLORS[addedStylists.length % NEW_STYLIST_COLORS.length];
-      setAddedStylists(prev => [...prev, {
-        id: newId,
-        name: inviteName.trim(),
-        specialty: inviteSpecialty.trim() || 'Estilista',
-        phone: invitePhone.trim(),
-        email: inviteEmail.trim(),
-        color,
-        serviceIds: inviteServiceIds,
-        schedule: inviteSchedule.filter(e => e.slots !== 'Libre' && e.slots.trim() !== ''),
-        rating: 0,
-        reviewCount: 0,
-        imageUrl: invitePhoto,
-      }]);
-      setInviteLoading(false);
-      setInviteStep('success');
-    }, 900);
-  }
-
-  function handleInvitePhoto(file?: File) {
+  // HU-09: creates the stylist in the backend (account, base weekly schedule and services). The
+  // backend emails the temporary credentials to the stylist.
+  async function handleInvite() {
+    setInviteError('');
     setInvitePhotoError('');
-    if (!file) {
-      setInvitePhoto('');
-      return;
-    }
-    if (!file.type.startsWith('image/')) {
-      setInvitePhoto('');
-      setInvitePhotoError('Selecciona un archivo de imagen válido.');
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      setInvitePhoto('');
-      setInvitePhotoError('La imagen debe pesar menos de 5 MB.');
+    if (!inviteName.trim() || !inviteEmail.trim()) return;
+    const photo = invitePhoto.trim();
+    if (photo && !/^https?:\/\/\S+$/i.test(photo)) {
+      setInvitePhotoError('La foto debe ser un enlace que empiece con http:// o https://');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') setInvitePhoto(reader.result);
-      else setInvitePhotoError('No se pudo cargar la imagen. Intenta con otro archivo.');
-    };
-    reader.onerror = () => setInvitePhotoError('No se pudo cargar la imagen. Intenta con otro archivo.');
-    reader.readAsDataURL(file);
+    const schedule: ScheduleEntryInput[] = [];
+    for (const entry of inviteSchedule) {
+      const text = entry.slots.trim();
+      if (!text || text.toLowerCase() === 'libre') continue;
+      const match = /^(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})$/.exec(text);
+      if (!match) {
+        setInviteError(`Horario inválido el ${entry.day}: usa el formato 09:00 – 18:00 o escribe Libre.`);
+        return;
+      }
+      const pad = (value: string) => value.padStart(2, '0');
+      schedule.push({
+        dayOfWeek: DAY_TO_API[entry.day],
+        startTime: `${pad(match[1])}:${match[2]}`,
+        endTime: `${pad(match[3])}:${match[4]}`,
+      });
+    }
+    if (schedule.length === 0) {
+      setInviteError('Configura al menos un día de horario.');
+      return;
+    }
+
+    setInviteLoading(true);
+    try {
+      await adminCreateStylist({
+        fullName: inviteName.trim(),
+        phone: invitePhone.trim(),
+        email: inviteEmail.trim().toLowerCase(),
+        specialty: inviteSpecialty.trim() || 'Estilista',
+        schedule,
+        serviceIds: inviteServiceIds,
+        photoUrl: photo || undefined,
+      });
+      await loadCatalog().catch(() => undefined); // the new stylist now shows in every list
+      setRefreshTick(tick => tick + 1);
+      setInviteStep('success');
+    } catch (error) {
+      if (error instanceof ApiError && error.fieldErrors) {
+        setInviteError(Object.values(error.fieldErrors)[0] ?? error.message);
+      } else {
+        setInviteError(error instanceof Error ? error.message : 'No se pudo dar de alta al estilista.');
+      }
+    } finally {
+      setInviteLoading(false);
+    }
   }
 
   function openEdit(id: string) {
@@ -489,22 +503,22 @@ export function AdminTeam({ onBack }: { onBack: () => void }) {
                 )}
                 <div className="min-w-0 flex-1">
                   <label htmlFor="invite-stylist-photo" className="block text-xs font-black text-[#6B4226]">
-                    Foto del estilista <span className="text-[#C45C4C]">*</span>
+                    Foto del estilista (enlace, opcional)
                   </label>
                   <input
                     id="invite-stylist-photo"
-                    type="file"
-                    accept="image/*"
-                    required
-                    aria-invalid={Boolean(invitePhotoError || !invitePhoto)}
+                    type="url"
+                    value={invitePhoto}
+                    placeholder="https://..."
+                    aria-invalid={Boolean(invitePhotoError)}
                     aria-describedby={invitePhotoError ? 'invite-stylist-photo-error' : 'invite-stylist-photo-hint'}
-                    onChange={event => handleInvitePhoto(event.target.files?.[0])}
-                    className="mt-2 block w-full text-xs text-[#8B5E3C] file:mr-3 file:min-h-11 file:rounded-full file:border-0 file:bg-white file:px-4 file:text-xs file:font-bold file:text-[#6B4226] hover:file:bg-[#F5E6D3]"
+                    onChange={event => { setInvitePhoto(event.target.value); setInvitePhotoError(''); }}
+                    className="mt-2 block w-full rounded-xl border border-transparent bg-white px-3 py-2 text-xs text-[#6B4226] focus:border-[#E8734A] focus:outline-none"
                   />
                   {invitePhotoError ? (
                     <p id="invite-stylist-photo-error" role="alert" className="mt-1 text-xs font-medium text-[#C45C4C]">{invitePhotoError}</p>
                   ) : (
-                    <p id="invite-stylist-photo-hint" className="mt-1 text-[10px] text-[#A67850]">Imagen obligatoria · máximo 5 MB</p>
+                    <p id="invite-stylist-photo-hint" className="mt-1 text-[10px] text-[#A67850]">Pega el enlace de una imagen (http o https)</p>
                   )}
                 </div>
               </div>
@@ -547,8 +561,12 @@ export function AdminTeam({ onBack }: { onBack: () => void }) {
                 </div>
               </div>
 
+              {inviteError && (
+                <p role="alert" className="rounded-xl bg-red-50 p-3 text-xs font-medium text-red-700">{inviteError}</p>
+              )}
+
               <div className="flex gap-2 pt-1">
-                <Button onClick={handleInvite} variant="primary" size="sm" fullWidth disabled={inviteLoading || !inviteName.trim() || !inviteEmail.trim() || !invitePhoto}>
+                <Button onClick={() => void handleInvite()} variant="primary" size="sm" fullWidth disabled={inviteLoading || !inviteName.trim() || !inviteEmail.trim()}>
                   {inviteLoading ? '⏳ Creando cuenta...' : 'Dar de alta y enviar invitación'}
                 </Button>
                 <Button onClick={() => { setShowInvite(false); resetInviteForm(); }} variant="ghost" size="sm">

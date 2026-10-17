@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { formatDuration, formatPrice, type Service } from '../data';
-import { getRecentAppointmentNotifications, LANDING_HOURS, LANDING_LOCATION, LANDING_SERVICE_IMAGES, LANDING_SERVICES, LANDING_STYLIST_IMAGES, LANDING_STYLISTS } from '../mockData';
+import { fetchNotifications, fetchRecommendations, markAllNotificationsRead, type ApiNotification, type ApiRecommendation } from '../backend';
+import { LANDING_HOURS, LANDING_LOCATION, LANDING_SERVICE_IMAGES, LANDING_SERVICES, LANDING_STYLIST_IMAGES, LANDING_STYLISTS } from '../mockData';
 
 type ServiceFilter = 'Todos' | 'Cortes' | 'Barba' | 'Combos' | 'Color' | 'Tratamientos';
 
@@ -93,7 +94,41 @@ export default function Landing({ isLoggedIn, userName, onLogin, onRegister, onB
   const [menuOpen, setMenuOpen] = useState(false);
   const [contentReady, setContentReady] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const recentNotifications = getRecentAppointmentNotifications(userName);
+  const [notifications, setNotifications] = useState<ApiNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [recommendations, setRecommendations] = useState<ApiRecommendation[]>([]);
+
+  // HU-06: the bell and "Recomendado para ti" come from the backend, only for signed-in clients.
+  // Each fails silently: a missing section is better than a broken page.
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setNotifications([]);
+      setUnreadCount(0);
+      setRecommendations([]);
+      return;
+    }
+    let active = true;
+    fetchNotifications()
+      .then(result => {
+        if (!active) return;
+        setNotifications(result.notifications);
+        setUnreadCount(result.unreadCount);
+      })
+      .catch(() => undefined);
+    fetchRecommendations()
+      .then(result => { if (active && result.eligible) setRecommendations(result.recommendations); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [isLoggedIn]);
+
+  const toggleNotifications = () => {
+    const opening = !notificationsOpen;
+    setNotificationsOpen(opening);
+    if (opening && unreadCount > 0) {
+      setUnreadCount(0);
+      void markAllNotificationsRead().catch(() => undefined);
+    }
+  };
 
   useEffect(() => {
     const timeout = setTimeout(() => setContentReady(true), 550);
@@ -188,8 +223,8 @@ export default function Landing({ isLoggedIn, userName, onLogin, onRegister, onB
                 <div className="relative">
                   <button
                     type="button"
-                    onClick={() => setNotificationsOpen(open => !open)}
-                    aria-label="Notificaciones, una nueva"
+                    onClick={toggleNotifications}
+                    aria-label={unreadCount > 0 ? `Notificaciones, ${unreadCount} nueva${unreadCount === 1 ? '' : 's'}` : 'Notificaciones'}
                     aria-expanded={notificationsOpen}
                     className="relative flex h-11 w-11 items-center justify-center rounded-full text-[#6B4226] transition-colors hover:bg-[#F5E6D3]"
                   >
@@ -197,21 +232,21 @@ export default function Landing({ isLoggedIn, userName, onLogin, onRegister, onB
                       <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
                       <path d="M10 21h4" />
                     </svg>
-                    <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full border-2 border-[#FFFCF8] bg-[#E8734A]" />
+                    {unreadCount > 0 && (
+                      <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full border-2 border-[#FFFCF8] bg-[#E8734A]" />
+                    )}
                   </button>
                   {notificationsOpen && (
-                    <div className="absolute right-0 top-14 z-50 w-72 rounded-2xl border border-[#F1E5D8] bg-white p-4 text-sm shadow-xl">
+                    <div className="absolute right-0 top-14 z-50 max-h-96 w-80 overflow-y-auto rounded-2xl border border-[#F1E5D8] bg-white p-4 text-sm shadow-xl">
                       <p className="font-bold text-[#402719]">Avisos recientes de tus citas</p>
-                      {recentNotifications.length > 0 ? (
+                      {notifications.length > 0 ? (
                         <ul className="mt-3 space-y-3">
-                          {recentNotifications.map(notification => (
+                          {notifications.map(notification => (
                             <li key={notification.id} className="border-t border-[#F1E5D8] pt-3">
-                              <p className="text-xs font-bold text-[#6B4226]">{notification.serviceName}</p>
-                              <p className="mt-1 text-xs text-[#8B6A52]">
-                                {new Date(`${notification.date}T00:00:00`).toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })} · {notification.time}
-                              </p>
+                              <p className="text-xs font-bold text-[#6B4226]">{notification.title}</p>
+                              <p className="mt-1 text-xs text-[#8B6A52]">{notification.message}</p>
                               <p className="mt-1 text-[11px] font-semibold text-[#E8734A]">
-                                {notification.status === 'confirmed' ? 'Cita confirmada' : notification.status === 'pending' ? 'Cita pendiente' : 'Cita cancelada'}
+                                {new Date(notification.createdAt).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' })}
                               </p>
                             </li>
                           ))}
@@ -361,7 +396,7 @@ export default function Landing({ isLoggedIn, userName, onLogin, onRegister, onB
           </div>
         </section>
 
-        {isLoggedIn && (
+        {isLoggedIn && recommendations.length > 0 && (
           <section className="bg-[#F7F0E7] px-5 py-16 sm:px-8 lg:px-12">
             <div className="mx-auto max-w-7xl">
               <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
@@ -376,20 +411,16 @@ export default function Landing({ isLoggedIn, userName, onLogin, onRegister, onB
                   {[0, 1, 2].map(index => <RecommendationSkeleton key={index} />)}
                 </div>
               ) : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {[
-                  { id: 's3', tag: 'Tu favorito habitual', stylist: 'Carlos' },
-                  { id: 's2', tag: 'Con Miguel', stylist: 'Miguel' },
-                  { id: 's5', tag: 'Un momento para ti', stylist: 'David' },
-                ].map(item => {
-                  const service = LANDING_SERVICES.find(candidate => candidate.id === item.id);
+                {recommendations.map(item => {
+                  const service = LANDING_SERVICES.find(candidate => candidate.id === item.serviceId);
                   if (!service) return null;
                   return (
-                    <button key={item.id} type="button" onClick={() => onBook(service.id)} className="group flex min-h-28 items-center gap-4 rounded-3xl bg-white p-4 text-left shadow-[0_5px_20px_rgba(64,39,25,0.06)] transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+                    <button key={`${item.serviceId}-${item.stylistId}`} type="button" onClick={() => onBook(service.id)} className="group flex min-h-28 items-center gap-4 rounded-3xl bg-white p-4 text-left shadow-[0_5px_20px_rgba(64,39,25,0.06)] transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
                       <img src={LANDING_SERVICE_IMAGES[service.id]} alt="" loading="lazy" className="h-20 w-20 rounded-2xl object-cover" />
                       <span className="min-w-0 flex-1">
-                        <span className="mb-1 inline-block rounded-full bg-[#F8E6DB] px-2.5 py-1 text-[10px] font-bold text-[#B85230]">{item.tag}</span>
+                        <span className="mb-1 inline-block rounded-full bg-[#F8E6DB] px-2.5 py-1 text-[10px] font-bold text-[#B85230]">{item.label}</span>
                         <span className="block truncate font-display font-extrabold text-[#402719]">{service.name}</span>
-                        <span className="mt-1 block text-xs text-[#8B6A52]">{item.stylist} · {formatPrice(service.price)}</span>
+                        <span className="mt-1 block text-xs text-[#8B6A52]">{item.stylistName.split(' ')[0]} · {formatPrice(service.price)}</span>
                       </span>
                       <span className="text-lg text-[#E8734A] transition-transform group-hover:translate-x-1">→</span>
                     </button>
@@ -414,12 +445,18 @@ export default function Landing({ isLoggedIn, userName, onLogin, onRegister, onB
               <div className="flex snap-x snap-mandatory gap-5 overflow-x-auto pb-5">
                 {LANDING_STYLISTS.map((stylist, index) => (
                   <article key={stylist.id} className="landing-fade-up min-w-[245px] flex-1 snap-start rounded-3xl border border-[#F1E5D8] bg-white p-6 text-center shadow-[0_8px_30px_rgba(64,39,25,0.06)] transition-all duration-300 hover:-translate-y-1 hover:shadow-xl sm:min-w-[260px]" style={{ animationDelay: `${index * 80}ms` }}>
-                    <div className="mx-auto h-28 w-28 overflow-hidden rounded-full border-4 border-[#F5E6D3] bg-[#F5E6D3]">
-                      <img src={LANDING_STYLIST_IMAGES[stylist.id]} alt={stylist.name} loading="lazy" className="h-full w-full object-cover" />
+                    <div className="mx-auto flex h-28 w-28 items-center justify-center overflow-hidden rounded-full border-4 border-[#F5E6D3] bg-[#F5E6D3]">
+                      {LANDING_STYLIST_IMAGES[stylist.id] ? (
+                        <img src={LANDING_STYLIST_IMAGES[stylist.id]} alt={stylist.name} loading="lazy" className="h-full w-full object-cover" />
+                      ) : (
+                        <span className="font-display text-3xl font-black text-[#A67850]" aria-hidden="true">{stylist.initials}</span>
+                      )}
                     </div>
                     <h3 className="mt-4 font-display text-lg font-black text-[#402719]">{stylist.name}</h3>
                     <p className="mt-1 text-sm text-[#8B6A52]">{stylist.specialty}</p>
-                    <p className="mt-3 text-sm font-bold text-[#6B4226]"><span className="text-[#E5A93D]">★</span> {stylist.rating.toFixed(1)} <span className="font-normal text-[#A67850]">/ 5.0 · {stylist.reviewCount} reseñas</span></p>
+                    {stylist.rating > 0 && (
+                      <p className="mt-3 text-sm font-bold text-[#6B4226]"><span className="text-[#E5A93D]">★</span> {stylist.rating.toFixed(1)} <span className="font-normal text-[#A67850]">/ 5.0{stylist.reviewCount > 0 ? ` · ${stylist.reviewCount} reseñas` : ''}</span></p>
+                    )}
                     <button type="button" onClick={() => onBook()} className="mt-5 min-h-11 w-full rounded-full border border-[#E8734A] text-xs font-bold text-[#E8734A] transition-colors hover:bg-[#E8734A] hover:text-white">{isLoggedIn ? `Reservar con ${stylist.name.split(' ')[0]}` : 'Crear cuenta'}</button>
                   </article>
                 ))}

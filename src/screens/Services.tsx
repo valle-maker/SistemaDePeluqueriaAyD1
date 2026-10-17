@@ -12,6 +12,15 @@ import {
 } from '../ui';
 import { MemphisStylistAvatar, ScissorsIcon } from '../illustrations';
 import {
+  fetchMe,
+  fetchNotifications,
+  fetchRecommendations,
+  markAllNotificationsRead,
+  type ApiNotification,
+  type ApiRecommendation,
+} from '../backend';
+import { getStylist } from '../data';
+import {
   crearServicio,
   desactivarServicio,
   editarServicio,
@@ -35,29 +44,63 @@ export function ClientHome({ onBook, onViewService, userName = 'Juan' }: {
 }) {
   const [query, setQuery] = useState('');
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [apiRecommendations, setApiRecommendations] = useState<ApiRecommendation[]>([]);
+  const [notifications, setNotifications] = useState<ApiNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const popularServices = SERVICES.filter(s => s.popular);
   const currentHour = new Date().getHours();
   const greeting = currentHour < 12 ? 'Buenos días' : currentHour < 19 ? 'Buenas tardes' : 'Buenas noches';
+  // The header shows the first name ("¡Buenos días! Juan"), as HU-06 asks.
+  const firstName = userName.trim().split(/\s+/)[0] || 'Cliente';
 
-  const searchResults = query.trim()
+  // HU-06: profile photo, "Recomendado para ti" and the notifications bell come from the backend.
+  // Each one fails silently: a missing section is better than a broken home screen.
+  useEffect(() => {
+    let active = true;
+    fetchMe().then(me => { if (active) setPhotoUrl(me.photoUrl); }).catch(() => undefined);
+    fetchRecommendations()
+      .then(result => { if (active && result.eligible) setApiRecommendations(result.recommendations); })
+      .catch(() => undefined);
+    fetchNotifications()
+      .then(result => {
+        if (!active) return;
+        setNotifications(result.notifications);
+        setUnreadCount(result.unreadCount);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+
+  const toggleNotifications = () => {
+    const opening = !notificationsOpen;
+    setNotificationsOpen(opening);
+    if (opening && unreadCount > 0) {
+      setUnreadCount(0);
+      void markAllNotificationsRead().catch(() => undefined);
+    }
+  };
+
+  // Search ignores case and accents ("clasico" finds "Corte Clásico"), like the backend's ?q=.
+  const normalize = (text: string) => text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+  const normalizedQuery = normalize(query.trim());
+  const searchResults = normalizedQuery
     ? [
         ...SERVICES.filter(s =>
-          s.name.toLowerCase().includes(query.toLowerCase()) ||
-          CATEGORY_CONFIG[s.category].label.toLowerCase().includes(query.toLowerCase())
+          normalize(s.name).includes(normalizedQuery) ||
+          normalize(CATEGORY_CONFIG[s.category].label).includes(normalizedQuery)
         ).map(s => ({ type: 'service' as const, id: s.id, name: s.name, sub: CATEGORY_CONFIG[s.category].label, emoji: CATEGORY_CONFIG[s.category].emoji })),
         ...STYLISTS.filter(st =>
-          st.name.toLowerCase().includes(query.toLowerCase()) ||
-          st.specialty.toLowerCase().includes(query.toLowerCase())
+          normalize(st.name).includes(normalizedQuery) ||
+          normalize(st.specialty).includes(normalizedQuery)
         ).map(st => ({ type: 'stylist' as const, id: st.id, name: st.name, sub: st.specialty, emoji: '✂️' })),
       ]
     : [];
 
-  // Recommendations: based on mock history (client has used s3 most)
-  const recommendations = [
-    { service: SERVICES.find(s => s.id === 's3')!, stylist: STYLISTS[0], reason: 'Tu favorito habitual' },
-    { service: SERVICES.find(s => s.id === 's2')!, stylist: STYLISTS[1], reason: 'Con Miguel, tu estilista' },
-    { service: SERVICES.find(s => s.id === 's6')!, stylist: STYLISTS[0], reason: 'Porque te gustó antes' },
-  ].filter(r => r.service);
+  // Recommendations (HU-06): only present once the client has enough bookings (backend decides).
+  const recommendations = apiRecommendations
+    .map(rec => ({ rec, service: getService(rec.serviceId), stylist: getStylist(rec.stylistId) }))
+    .filter(r => r.service);
 
   return (
     <div className="flex flex-col h-full bg-[#FBF3E9] overflow-y-auto pb-20">
@@ -74,20 +117,21 @@ export function ClientHome({ onBook, onViewService, userName = 'Juan' }: {
           <div className="flex items-center justify-between gap-4 mb-5">
             <div className="flex min-w-0 flex-1 items-center gap-3">
               {/* User avatar */}
-              <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center border-2 border-white/40 flex-shrink-0">
+              <div className="relative w-12 h-12 overflow-hidden bg-white/20 rounded-full flex items-center justify-center border-2 border-white/40 flex-shrink-0">
+                {photoUrl && <img src={photoUrl} alt={userName} className="absolute inset-0 h-full w-full object-cover" />}
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="white">
                   <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v1a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-1c0-2.66-5.33-4-8-4z"/>
                 </svg>
               </div>
               <div className="min-w-0 py-0.5">
                 <p className="text-white/90 text-xs sm:text-sm font-semibold leading-5">¡{greeting}! <span aria-hidden="true">👋</span></p>
-                <h1 className="text-white font-black font-display text-lg sm:text-xl leading-6 truncate">{userName}</h1>
+                <h1 className="text-white font-black font-display text-lg sm:text-xl leading-6 truncate">{firstName}</h1>
               </div>
             </div>
             <div className="relative z-20 flex-shrink-0">
               <button
                 type="button"
-                onClick={() => setNotificationsOpen(open => !open)}
+                onClick={toggleNotifications}
                 aria-label={notificationsOpen ? 'Cerrar notificaciones' : 'Abrir notificaciones'}
                 aria-expanded={notificationsOpen}
                 className="relative flex h-11 w-11 items-center justify-center rounded-2xl border border-white/25 bg-white/15 text-white transition-colors hover:bg-white/25 focus-visible:outline-2 focus-visible:outline-white"
@@ -96,12 +140,28 @@ export function ClientHome({ onBook, onViewService, userName = 'Juan' }: {
                   <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
                   <path d="M10 21h4" />
                 </svg>
-                <span aria-hidden="true" className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full border-2 border-[#E8734A] bg-[#FFE08A]" />
+                {unreadCount > 0 && (
+                  <span aria-hidden="true" className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full border-2 border-[#E8734A] bg-[#FFE08A]" />
+                )}
               </button>
               {notificationsOpen && (
-                <div role="status" className="absolute right-0 top-14 z-50 w-[min(16rem,calc(100vw-2.5rem))] rounded-2xl border border-[#EDD8BC] bg-white p-4 text-left shadow-xl">
+                <div role="status" className="absolute right-0 top-14 z-50 w-[min(18rem,calc(100vw-2.5rem))] max-h-80 overflow-y-auto rounded-2xl border border-[#EDD8BC] bg-white p-4 text-left shadow-xl">
                   <p className="text-sm font-bold text-[#6B4226]">Notificaciones</p>
-                  <p className="mt-1 text-xs leading-relaxed text-[#8B5E3C]">Te avisaremos cuando haya novedades sobre tus citas.</p>
+                  {notifications.length === 0 ? (
+                    <p className="mt-1 text-xs leading-relaxed text-[#8B5E3C]">Te avisaremos cuando haya novedades sobre tus citas.</p>
+                  ) : (
+                    <ul className="mt-2 flex flex-col gap-2">
+                      {notifications.map(notification => (
+                        <li key={notification.id} className="rounded-xl bg-[#FBF3E9] p-3">
+                          <p className="text-xs font-bold text-[#6B4226]">{notification.title}</p>
+                          <p className="mt-0.5 text-xs leading-relaxed text-[#8B5E3C]">{notification.message}</p>
+                          <p className="mt-1 text-[10px] text-[#C8A88A]">
+                            {new Date(notification.createdAt).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' })}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
             </div>
@@ -190,37 +250,41 @@ export function ClientHome({ onBook, onViewService, userName = 'Juan' }: {
             <span className="text-white/80 text-xl">→</span>
           </button>
 
-          {/* Recommendations */}
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-lg">✨</span>
-            <h2 className="font-black text-[#6B4226] font-display text-lg">Recomendado para ti</h2>
-          </div>
-          <div className="flex flex-col gap-2 mb-6">
-            {recommendations.map((rec, i) => rec.service && (
-              <button
-                key={i}
-                onClick={() => onBook(rec.service.id)}
-                className="flex items-center gap-3 p-3.5 bg-white rounded-[20px] shadow-[0_2px_12px_rgba(107,66,38,0.08)] text-left hover:shadow-[0_4px_20px_rgba(107,66,38,0.14)] active:scale-[0.98] transition-all"
-              >
-                <ServicePhoto serviceId={rec.service.id} category={rec.service.category} className="h-12 w-12 shrink-0 rounded-2xl" />
-                <div className="flex-1 min-w-0">
-                  <div className="font-black text-[#6B4226] font-display text-sm">{rec.service.name}</div>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    <MemphisStylistAvatar name={rec.stylist.name} color={rec.stylist.color} size={16} />
-                    <span className="text-xs text-[#A67850]">{rec.stylist.name.split(' ')[0]}</span>
-                    <span className="text-[10px] text-[#EDD8BC]">·</span>
-                    <span className="text-[10px] text-[#8B9D77] font-semibold bg-[#EAF2E3] px-1.5 py-0.5 rounded-full">
-                      {rec.reason}
-                    </span>
-                  </div>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <div className="font-black text-[#E8734A] text-sm">{formatPrice(rec.service.price)}</div>
-                  <div className="text-[10px] text-[#C8A88A]">{formatDuration(rec.service.duration)}</div>
-                </div>
-              </button>
-            ))}
-          </div>
+          {/* Recommendations: shown only once the backend says the client qualifies (HU-06) */}
+          {recommendations.length > 0 && (
+            <>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-lg">✨</span>
+                <h2 className="font-black text-[#6B4226] font-display text-lg">Recomendado para ti</h2>
+              </div>
+              <div className="flex flex-col gap-2 mb-6">
+                {recommendations.map(({ rec, service, stylist }, i) => service && (
+                  <button
+                    key={i}
+                    onClick={() => onBook(service.id)}
+                    className="flex items-center gap-3 p-3.5 bg-white rounded-[20px] shadow-[0_2px_12px_rgba(107,66,38,0.08)] text-left hover:shadow-[0_4px_20px_rgba(107,66,38,0.14)] active:scale-[0.98] transition-all"
+                  >
+                    <ServicePhoto serviceId={service.id} category={service.category} className="h-12 w-12 shrink-0 rounded-2xl" />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-black text-[#6B4226] font-display text-sm">{service.name}</div>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <MemphisStylistAvatar name={rec.stylistName} color={stylist?.color ?? '#E8734A'} size={16} />
+                        <span className="text-xs text-[#A67850]">{rec.stylistName.split(' ')[0]}</span>
+                        <span className="text-[10px] text-[#EDD8BC]">·</span>
+                        <span className="text-[10px] text-[#8B9D77] font-semibold bg-[#EAF2E3] px-1.5 py-0.5 rounded-full">
+                          {rec.label}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="font-black text-[#E8734A] text-sm">{formatPrice(service.price)}</div>
+                      <div className="text-[10px] text-[#C8A88A]">{formatDuration(service.duration)}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
           {/* Popular services */}
           <div className="flex items-center justify-between mb-3">
@@ -261,10 +325,12 @@ export function ClientHome({ onBook, onViewService, userName = 'Juan' }: {
                   {stylist.name.split(' ')[0]}
                 </div>
                 <div className="text-[10px] text-[#A67850] mb-1.5">{stylist.specialty}</div>
-                <div className="flex items-center justify-center gap-0.5">
-                  <span className="text-[#F2A950] text-xs">★</span>
-                  <span className="text-xs font-bold text-[#6B4226]">{stylist.rating}</span>
-                </div>
+                {stylist.rating > 0 && (
+                  <div className="flex items-center justify-center gap-0.5">
+                    <span className="text-[#F2A950] text-xs">★</span>
+                    <span className="text-xs font-bold text-[#6B4226]">{stylist.rating}</span>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -280,8 +346,8 @@ export function ClientHome({ onBook, onViewService, userName = 'Juan' }: {
               <h3 className="text-white font-black font-display text-lg leading-tight mb-1">
                 Corte + Barba combo
               </h3>
-              <p className="text-white/70 text-sm mb-3">Esta semana con 15% de descuento</p>
-              <Button onClick={() => onBook('s3')} variant="secondary" size="sm">
+              <p className="text-white/70 text-sm mb-3">El combo más elegido por nuestros clientes</p>
+              <Button onClick={() => onBook(SERVICES.find(s => s.name === 'Corte + Barba')?.id ?? popularServices[0]?.id)} variant="secondary" size="sm">
                 Reservar ahora
               </Button>
             </div>
@@ -468,10 +534,14 @@ export function ServiceDetail({ serviceId, onBook, onBack }: {
                   <MemphisStylistAvatar name={stylist.name} color={stylist.color} size={40} />
                   <div>
                     <div className="font-bold text-[#6B4226] text-sm">{stylist.name.split(' ')[0]}</div>
-                    <div className="flex items-center gap-0.5 text-xs">
-                      <span className="text-[#F2A950]">★</span>
-                      <span className="font-bold text-[#6B4226]">{stylist.rating}</span>
-                    </div>
+                    {stylist.rating > 0 ? (
+                      <div className="flex items-center gap-0.5 text-xs">
+                        <span className="text-[#F2A950]">★</span>
+                        <span className="font-bold text-[#6B4226]">{stylist.rating}</span>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-[#A67850]">{stylist.specialty}</div>
+                    )}
                   </div>
                 </div>
               ))}

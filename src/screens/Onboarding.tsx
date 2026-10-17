@@ -3,18 +3,9 @@ import { SplashIllustration } from '../illustrations';
 import { Button, Input, Card } from '../ui';
 import type { UserRole } from '../data';
 import { requestRecoveryCode, resetPassword, verifyRecoveryCode } from '../services/recovery';
-
-// Mock registered accounts — in production these would live in the backend
-const REGISTERED_ACCOUNTS: { email: string; password: string; role: UserRole; name: string }[] = [
-  { email: 'admin@barberia.com', password: 'demo1234', role: 'admin', name: 'Admin BarberBook' },
-  { email: 'estilista@barberia.com', password: 'demo1234', role: 'stylist', name: 'Carlos Ruiz' },
-  { email: 'cliente1@demo.com', password: 'cliente123', role: 'client', name: 'Juan García' },
-  { email: 'cliente2@demo.com', password: 'cliente123', role: 'client', name: 'María López' },
-  { email: 'cliente3@demo.com', password: 'cliente123', role: 'client', name: 'Andrés Pérez' },
-  { email: 'cliente4@demo.com', password: 'cliente123', role: 'client', name: 'Sofía Ramírez' },
-  { email: 'cliente5@demo.com', password: 'cliente123', role: 'client', name: 'Prueba de seguridad' },
-];
-const REGISTERED_EMAILS = REGISTERED_ACCOUNTS.map(a => a.email);
+import { ApiError } from '../api';
+import { loginRequest, registerRequest } from '../backend';
+import { setToken } from '../session';
 
 function hasSpecialChar(s: string) {
   return /[!@#$%^&*()\-_=+[\]{};:'",.<>/?\\|`~]/.test(s);
@@ -149,7 +140,7 @@ export function LoginScreen({ onLogin, onRegister, onBack, onForgotPassword }: {
     }
   };
 
-  const handleLogin = (event: FormEvent<HTMLFormElement>) => {
+  const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isBlocked) return;
     setTouched({ email: true, password: true });
@@ -160,19 +151,26 @@ export function LoginScreen({ onLogin, onRegister, onBack, onForgotPassword }: {
     }
 
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      const account = REGISTERED_ACCOUNTS.find(
-        a => a.email === email.trim().toLowerCase() && a.password === password
-      );
-      if (account) {
-        setError('');
-        failedAttemptTimes.current = [];
-        onLogin(account.role, account.name);
+    try {
+      const session = await loginRequest(email.trim().toLowerCase(), password);
+      setToken(session.token);
+      setError('');
+      failedAttemptTimes.current = [];
+      onLogin(session.role, session.fullName);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 423) {
+        // The backend locks the account after repeated failures (HU-02).
+        setIsBlocked(true);
+        setBlockSecondsLeft(600);
+        setError(err.message);
+      } else if (err instanceof ApiError && err.status === 401) {
+        registerFailedAttempt(err.message);
       } else {
-        registerFailedAttempt('Correo o contraseña incorrectos.');
+        setError(err instanceof Error ? err.message : 'No se pudo iniciar sesión. Inténtalo de nuevo.');
       }
-    }, 900);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -278,34 +276,6 @@ export function LoginScreen({ onLogin, onRegister, onBack, onForgotPassword }: {
           </Button>
         </form>
 
-        {/* Demo hint */}
-        <div className="bg-[#F5E6D3] rounded-2xl p-4 mb-6 border border-[#EDD8BC]">
-          <p className="text-xs text-[#8B5E3C] font-semibold mb-1.5">💡 Accesos demo:</p>
-          <div className="flex flex-col gap-1">
-            {REGISTERED_ACCOUNTS.filter(account => account.role === 'client').map((account, index) => (
-              <button
-                key={account.email}
-                onClick={() => { setEmail(account.email); setPassword(account.password); }}
-                className="text-left text-xs text-[#E8734A] font-semibold hover:underline"
-              >
-                Cliente {index + 1}{index === 4 ? ' · prueba de acceso al historial' : ''}: {account.email} · {account.password}
-              </button>
-            ))}
-            <button
-              onClick={() => { setEmail('estilista@barberia.com'); setPassword('demo1234'); }}
-              className="text-left text-xs text-[#E8734A] font-semibold hover:underline"
-            >
-              Estilista: estilista@barberia.com · demo1234
-            </button>
-            <button
-              onClick={() => { setEmail('admin@barberia.com'); setPassword('demo1234'); }}
-              className="text-left text-xs text-[#E8734A] font-semibold hover:underline"
-            >
-              Admin: admin@barberia.com · demo1234
-            </button>
-          </div>
-        </div>
-
         <button
           onClick={onForgotPassword}
           className="w-full text-center mt-4 text-[#A67850] text-sm font-medium hover:text-[#E8734A] transition-colors"
@@ -324,7 +294,7 @@ export function LoginScreen({ onLogin, onRegister, onBack, onForgotPassword }: {
 // ─── REGISTER ──────────────────────────────────────────────────────────────────
 
 export function RegisterScreen({ onRegister, onLogin, onBack }: {
-  onRegister: () => void;
+  onRegister: (role: UserRole, name: string) => void;
   onLogin: () => void;
   onBack: () => void;
 }) {
@@ -341,8 +311,6 @@ export function RegisterScreen({ onRegister, onLogin, onBack }: {
     if (!name.trim()) e.name = 'El nombre es obligatorio';
     if (!email.includes('@')) {
       e.email = 'Correo electrónico inválido';
-    } else if (REGISTERED_EMAILS.includes(email.toLowerCase())) {
-      e.email = 'Este correo ya se encuentra registrado. Intenta iniciar sesión.';
     }
     if (phone.length < 9) e.phone = 'Ingresa un número válido (mínimo 9 dígitos)';
     if (password.length < 8) {
@@ -355,16 +323,35 @@ export function RegisterScreen({ onRegister, onLogin, onBack }: {
     return e;
   };
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
     const e = validate();
     if (Object.keys(e).length > 0) { setErrors(e); return; }
     setErrors({});
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
+    try {
+      const cleanEmail = email.trim().toLowerCase();
+      await registerRequest({ fullName: name.trim(), phone: phone.trim(), email: cleanEmail, password });
+      // Registration does not start a session by itself: sign in with the same credentials.
+      const session = await loginRequest(cleanEmail, password);
+      setToken(session.token);
       setShowToast(true);
-      setTimeout(() => { setShowToast(false); onRegister(); }, 2000);
-    }, 1000);
+      setTimeout(() => { setShowToast(false); onRegister(session.role, session.fullName); }, 1500);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setErrors({ email: 'Este correo ya se encuentra registrado. Intenta iniciar sesión.' });
+      } else if (err instanceof ApiError && err.fieldErrors) {
+        // The backend names its fields fullName / phone / email / password; the form uses name.
+        const mapped: Record<string, string> = {};
+        for (const [field, message] of Object.entries(err.fieldErrors)) {
+          mapped[field === 'fullName' ? 'name' : field] = message;
+        }
+        setErrors(mapped);
+      } else {
+        setErrors({ email: err instanceof Error ? err.message : 'No se pudo crear la cuenta. Inténtalo de nuevo.' });
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -470,7 +457,7 @@ export function RegisterScreen({ onRegister, onLogin, onBack }: {
       {showToast && (
         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 px-5 py-3.5 bg-[#4A7C59] text-white rounded-2xl shadow-2xl flex items-center gap-2.5 font-semibold text-sm whitespace-nowrap">
           <span className="text-lg">✅</span>
-          ¡Registro exitoso! Ya puedes iniciar sesión
+          ¡Registro exitoso! Iniciando sesión…
         </div>
       )}
     </div>

@@ -44,8 +44,6 @@ export interface BookingState {
   stylistId: string | null;
   date: string | null;
   time: string | null;
-  holdId?: string;
-  holdExpiresAt?: number;
 }
 
 export const SERVICES: Service[] = [
@@ -53,7 +51,7 @@ export const SERVICES: Service[] = [
     id: 's1',
     name: 'Corte Clásico',
     description: 'Corte profesional adaptado a tu estilo. Incluye lavado, corte con tijera o máquina y peinado final con productos premium.',
-    price: 25,
+    price: 25000,
     duration: 30,
     category: 'cut',
     popular: true,
@@ -62,7 +60,7 @@ export const SERVICES: Service[] = [
     id: 's2',
     name: 'Arreglo de Barba',
     description: 'Perfilado y arreglo completo de barba. Incluye recorte preciso, perfilado con navaja y aceite hidratante artesanal.',
-    price: 20,
+    price: 20000,
     duration: 20,
     category: 'beard',
   },
@@ -70,7 +68,7 @@ export const SERVICES: Service[] = [
     id: 's3',
     name: 'Corte + Barba',
     description: 'El combo perfecto para lucir impecable. Corte de cabello y arreglo completo de barba a precio especial. El más elegido.',
-    price: 40,
+    price: 40000,
     duration: 50,
     category: 'cut',
     popular: true,
@@ -79,7 +77,7 @@ export const SERVICES: Service[] = [
     id: 's4',
     name: 'Color y Tinte',
     description: 'Coloración profesional con productos sin amoniaco. Incluye consulta de color, aplicación y tratamiento post-tinte.',
-    price: 55,
+    price: 55000,
     duration: 90,
     category: 'color',
   },
@@ -87,7 +85,7 @@ export const SERVICES: Service[] = [
     id: 's5',
     name: 'Tratamiento Capilar',
     description: 'Hidratación profunda y nutrición capilar. Recupera el brillo natural y fortalece tu cabello desde la raíz.',
-    price: 45,
+    price: 45000,
     duration: 60,
     category: 'treatment',
   },
@@ -95,7 +93,7 @@ export const SERVICES: Service[] = [
     id: 's6',
     name: 'Afeitado con Navaja',
     description: 'Afeitado tradicional con navaja recta. Toalla caliente, crema artesanal y bálsamo post-afeitado. Una experiencia única.',
-    price: 30,
+    price: 30000,
     duration: 30,
     category: 'beard',
     popular: true,
@@ -104,7 +102,7 @@ export const SERVICES: Service[] = [
     id: 's7',
     name: 'Degradado Premium',
     description: 'Degradado a medida con transiciones precisas, contornos definidos y acabado profesional.',
-    price: 35,
+    price: 35000,
     duration: 40,
     category: 'cut',
     popular: true,
@@ -113,7 +111,7 @@ export const SERVICES: Service[] = [
     id: 's8',
     name: 'Diseño y Perfilado de Cejas',
     description: 'Diseño personalizado y perfilado cuidadoso para equilibrar y realzar tus facciones.',
-    price: 12,
+    price: 12000,
     duration: 15,
     category: 'beard',
   },
@@ -121,7 +119,7 @@ export const SERVICES: Service[] = [
     id: 's9',
     name: 'Corte + Color',
     description: 'Renueva tu look con un corte personalizado y coloración profesional en una sola visita.',
-    price: 70,
+    price: 70000,
     duration: 120,
     category: 'color',
     popular: true,
@@ -130,7 +128,7 @@ export const SERVICES: Service[] = [
     id: 's10',
     name: 'Alisado y Control de Frizz',
     description: 'Tratamiento de control de frizz que facilita el peinado y deja el cabello suave y manejable.',
-    price: 65,
+    price: 65000,
     duration: 90,
     category: 'treatment',
   },
@@ -138,7 +136,7 @@ export const SERVICES: Service[] = [
     id: 's11',
     name: 'Corte + Barba Premium',
     description: 'Corte detallado, arreglo de barba y acabado con toalla caliente para una renovación completa.',
-    price: 50,
+    price: 50000,
     duration: 65,
     category: 'cut',
     popular: true,
@@ -147,7 +145,7 @@ export const SERVICES: Service[] = [
     id: 's12',
     name: 'Lavado y Peinado',
     description: 'Lavado relajante con productos profesionales y peinado final para cualquier ocasión.',
-    price: 18,
+    price: 18000,
     duration: 25,
     category: 'treatment',
   },
@@ -288,12 +286,18 @@ export const UNAVAILABLE_DATES = ['2026-09-07', '2026-09-08', '2026-09-14', '202
 
 export const BUSY_DATES = ['2026-09-03', '2026-09-09', '2026-09-17'];
 
+// SERVICES and STYLISTS start as demo data and are replaced in place by the real catalog from the
+// backend (see catalog.ts). The demo copies are kept so the still-simulated "Mis citas" screens,
+// whose appointments reference the old demo ids, keep working.
+export const DEMO_SERVICES: Service[] = [...SERVICES];
+export const DEMO_STYLISTS: Stylist[] = [...STYLISTS];
+
 export function getService(id: string): Service | undefined {
-  return SERVICES.find(s => s.id === id);
+  return SERVICES.find(s => s.id === id) ?? DEMO_SERVICES.find(s => s.id === id);
 }
 
 export function getStylist(id: string): Stylist | undefined {
-  return STYLISTS.find(s => s.id === id);
+  return STYLISTS.find(s => s.id === id) ?? DEMO_STYLISTS.find(s => s.id === id);
 }
 
 export function getStylistsForService(serviceId: string): Stylist[] {
@@ -301,7 +305,7 @@ export function getStylistsForService(serviceId: string): Stylist[] {
 }
 
 export function formatPrice(price: number): string {
-  return `$${price}`;
+  return `$${price.toLocaleString('es-CO')}`;
 }
 
 export function formatDuration(minutes: number): string {
