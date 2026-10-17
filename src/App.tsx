@@ -459,7 +459,7 @@ export default function App() {
         return (
           <ProfileScreen
             role={role}
-            onChangeRole={() => nav('role-select')}
+            userName={userName}
             onLogout={handleLogout}
           />
         );
@@ -584,9 +584,9 @@ const REWARDS = [
   { id: 4, title: 'Combo con 20%', subtitle: 'Corte + Barba con descuento', points: 1000, icon: '🎁', available: true },
 ];
 
-function ProfileScreen({ role, onChangeRole, onLogout }: {
+function ProfileScreen({ role, userName, onLogout }: {
   role: UserRole;
-  onChangeRole: () => void;
+  userName: string;
   onLogout: () => void;
 }) {
   const [showReferral, setShowReferral] = useState(false);
@@ -596,10 +596,10 @@ function ProfileScreen({ role, onChangeRole, onLogout }: {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [editName, setEditName] = useState('Juan García');
-  const [editPhone, setEditPhone] = useState('+34 600 123 456');
-  const [profileName, setProfileName] = useState('Juan García');
-  const [profilePhone, setProfilePhone] = useState('+34 600 123 456');
+  const [editName, setEditName] = useState(userName);
+  const [editPhone, setEditPhone] = useState('');
+  const [profileName, setProfileName] = useState(userName);
+  const [profilePhone, setProfilePhone] = useState('');
   const [editSaved, setEditSaved] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deletePasswordError, setDeletePasswordError] = useState('');
@@ -809,16 +809,8 @@ function ProfileScreen({ role, onChangeRole, onLogout }: {
           ))}
         </div>
 
-        <div className="bg-white rounded-[20px] shadow-[0_4px_20px_rgba(107,66,38,0.1)] overflow-hidden mb-4">
-          <button
-            onClick={onChangeRole}
-            className="flex items-center gap-3 w-full px-4 py-3.5 text-left hover:bg-[#FBF3E9] transition-colors cursor-pointer"
-          >
-            <span className="w-8 h-8 rounded-xl bg-[#FBF3E9] flex items-center justify-center">🔐</span>
-            <span className="font-semibold text-[#6B4226] text-sm flex-1">Cambiar rol (demo)</span>
-            <span className="text-[#C8A88A] text-lg">›</span>
-          </button>
-        </div>
+        {/* The "Cambiar rol (demo)" shortcut is gone: the role now comes from the account and the
+            backend enforces it, so faking it in the UI would only produce "Acceso Denegado". */}
 
         <button
           onClick={() => setShowLogoutModal(true)}

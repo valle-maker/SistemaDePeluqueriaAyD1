@@ -164,7 +164,8 @@ export function LoginScreen({ onLogin, onRegister, onBack, onForgotPassword }: {
         setBlockSecondsLeft(600);
         setError(err.message);
       } else if (err instanceof ApiError && err.status === 401) {
-        registerFailedAttempt(err.message);
+        // The backend already counts failed attempts and says so ("... Intento 1 de 5.").
+        setError(err.message);
       } else {
         setError(err instanceof Error ? err.message : 'No se pudo iniciar sesión. Inténtalo de nuevo.');
       }
