@@ -10,6 +10,7 @@ import {
   confirmReservation,
   getAvailabilityForMonth,
   getDisponibilidad,
+  rescheduleMyAppointment,
   type AvailableSlot,
 } from '../services/bookingService';
 import { SuccessIllustration, MemphisStylistAvatar } from '../illustrations';
@@ -111,12 +112,13 @@ export function BookStep1({ onNext, onBack }: {
 
 // ─── STEP 2 — Choose Stylist ───────────────────────────────────────────────────
 
-export function BookStep2({ serviceId, onNext, onBack }: {
+export function BookStep2({ serviceId, initialStylistId, onNext, onBack }: {
   serviceId: string;
+  initialStylistId?: string | null;
   onNext: (stylistId: string) => void;
   onBack: () => void;
 }) {
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initialStylistId ?? null);
   const service = getService(serviceId);
   const stylists = getStylistsForService(serviceId);
 
@@ -542,8 +544,9 @@ export function BookStep3({ serviceId, stylistId, initialDate, onNext, onBack }:
 
 // ─── STEP 4 — Confirm ──────────────────────────────────────────────────────────
 
-export function BookStep4({ booking, onConfirm, onBack, onConflict, onChooseNewTime }: {
+export function BookStep4({ booking, appointmentId, onConfirm, onBack, onConflict, onChooseNewTime }: {
   booking: BookingState;
+  appointmentId?: string | null;
   onConfirm: (reservationCode: string, stylistId: string) => void;
   onBack: () => void;
   onConflict: (message: string) => void;
@@ -564,6 +567,16 @@ export function BookStep4({ booking, onConfirm, onBack, onConflict, onChooseNewT
     setLoading(true);
     setConfirmationError(null);
     try {
+      if (appointmentId) {
+        await rescheduleMyAppointment(appointmentId, {
+          date: booking.date!,
+          time: booking.time!,
+          stylistId: booking.stylistId!,
+        });
+        onConfirm(appointmentId, booking.stylistId!);
+        return;
+      }
+
       const confirmation = await confirmReservation({
         servicioId: booking.serviceId!,
         estilistaId: booking.stylistId!,
@@ -599,7 +612,11 @@ export function BookStep4({ booking, onConfirm, onBack, onConflict, onChooseNewT
   return (
     <div className="flex flex-col h-full bg-[#FBF3E9]">
       <div className="bg-white px-5 pt-10 pb-4 shadow-[0_2px_12px_rgba(107,66,38,0.06)]">
-        <PageHeader title="Confirmar Reserva" subtitle="Revisa los detalles antes de confirmar" onBack={onBack} />
+        <PageHeader
+          title={appointmentId ? 'Confirmar Reprogramación' : 'Confirmar Reserva'}
+          subtitle="Revisa los detalles antes de confirmar"
+          onBack={onBack}
+        />
         <div className="px-5 pt-2 pb-4">
           <BookingProgress step={4} />
         </div>
@@ -707,15 +724,15 @@ export function BookStep4({ booking, onConfirm, onBack, onConflict, onChooseNewT
         <Button onClick={() => void handleConfirm()} variant="primary" size="lg" fullWidth disabled={loading}>
           {loading ? (
             <span className="flex items-center gap-2">
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
-              Confirmando reserva...
+              <span className="h-4 w-4 motion-safe:animate-spin motion-reduce:animate-none rounded-full border-2 border-white/50 border-t-white" aria-hidden="true" />
+              {appointmentId ? 'Actualizando cita...' : 'Confirmando reserva...'}
             </span>
           ) : (
-            'Confirmar Reserva'
+            appointmentId ? 'Confirmar reprogramación' : 'Confirmar Reserva'
           )}
         </Button>
-        <p className="text-center text-xs text-[#A67850] mt-2">
-          Recibirás una confirmación por correo
+        <p className="text-center text-xs text-[#6B4226] mt-2" role="status" aria-live="polite">
+          {appointmentId ? 'Al confirmar se actualizará esta misma cita.' : 'Recibirás una confirmación por correo'}
         </p>
       </div>
       {conflictMessage && (

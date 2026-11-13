@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router';
 import type { UserRole, BookingState } from './data';
 import { APPOINTMENTS } from './data';
-import { BottomNav, SideNav } from './ui';
+import { AccessibilityWidget, BottomNav, resetAccessibilityPreferences, SideNav } from './ui';
 
 // Onboarding
 import { LoginScreen, RegisterScreen, RoleSelectScreen, ForgotPasswordScreen, SplashScreen } from './screens/Onboarding';
@@ -129,6 +129,7 @@ export default function App() {
   const [booking, setBooking] = useState<BookingState>(INITIAL_BOOKING);
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(null);
+  const [reschedulingAppointmentId, setReschedulingAppointmentId] = useState<string | null>(null);
   const [reservationCode, setReservationCode] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const dismissToast = useCallback(() => setToastMessage(null), []);
@@ -211,6 +212,7 @@ export default function App() {
     // Revoke the token on the server first (it needs the token), then forget the session locally.
     void logoutRequest().catch(() => undefined).finally(() => clearSession());
     setIsLoggedIn(false);
+    resetAccessibilityPreferences();
     sessionStorage.removeItem(SESSION_KEY_AUTH);
     sessionStorage.removeItem(SESSION_KEY_ROLE);
     sessionStorage.removeItem(SESSION_KEY_USER_NAME);
@@ -218,6 +220,7 @@ export default function App() {
   };
 
   const startBooking = (serviceId?: string) => {
+    setReschedulingAppointmentId(null);
     if (serviceId) {
       setBooking({ ...INITIAL_BOOKING, serviceId });
       nav('book-2');
@@ -225,6 +228,21 @@ export default function App() {
       setBooking(INITIAL_BOOKING);
       nav('book-1');
     }
+  };
+
+  const repeatAppointment = (serviceId: string, stylistId: string) => {
+    setReschedulingAppointmentId(null);
+    setSelectedAppointmentId(null);
+    setReservationCode(null);
+    setBooking({ ...INITIAL_BOOKING, serviceId, stylistId });
+    nav('book-3');
+  };
+
+  const startRescheduling = (appointmentId: string, serviceId: string) => {
+    setSelectedAppointmentId(appointmentId);
+    setReschedulingAppointmentId(appointmentId);
+    setBooking({ ...INITIAL_BOOKING, serviceId });
+    nav('book-2');
   };
 
   const handleClientTab = (tab: ClientTab) => {
@@ -343,6 +361,7 @@ export default function App() {
         return (
           <BookStep2
             serviceId={booking.serviceId}
+            initialStylistId={booking.stylistId}
             onNext={id => { setBooking(b => ({ ...b, stylistId: id })); nav('book-3'); }}
             onBack={() => nav('book-1')}
           />
@@ -372,7 +391,15 @@ export default function App() {
         return (
           <BookStep4
             booking={booking}
+            appointmentId={reschedulingAppointmentId}
             onConfirm={(code, assignedStylistId) => {
+              if (reschedulingAppointmentId) {
+                setReschedulingAppointmentId(null);
+                setBooking(INITIAL_BOOKING);
+                setToastMessage('Cita reprogramada exitosamente');
+                nav('my-appointments');
+                return;
+              }
               setReservationCode(code);
               // Show the stylist the backend actually assigned (matters for "any").
               setBooking(current => ({ ...current, stylistId: assignedStylistId }));
@@ -406,7 +433,7 @@ export default function App() {
         return (
           <MyAppointments
             onBook={() => startBooking()}
-            onViewDetail={id => { setSelectedAppointmentId(id); nav('appointment-detail'); }}
+            onRepeatAppointment={repeatAppointment}
             onCancel={id => { setSelectedAppointmentId(id); nav('cancel-appointment'); }}
           />
         );
@@ -415,7 +442,7 @@ export default function App() {
         return selectedAppointmentId ? (
           <AppointmentDetail
             appointmentId={selectedAppointmentId}
-            onReschedule={() => startBooking()}
+            onReschedule={serviceId => startRescheduling(selectedAppointmentId, serviceId)}
             onCancel={() => nav('cancel-appointment')}
             onRebook={id => startBooking(id)}
             onBack={() => nav('my-appointments')}
@@ -426,7 +453,10 @@ export default function App() {
         return selectedAppointmentId ? (
           <CancelAppointment
             appointmentId={selectedAppointmentId}
-            onConfirm={() => nav('my-appointments')}
+            onConfirm={() => {
+              setToastMessage('Cita cancelada');
+              nav('my-appointments');
+            }}
             onBack={() => nav('my-appointments')}
           />
         ) : (() => { nav('my-appointments'); return null; })();
@@ -489,6 +519,7 @@ export default function App() {
           {renderScreen()}
         </div>
         <GlobalToast message={toastMessage} onDismiss={dismissToast} />
+        <AccessibilityWidget />
       </div>
     );
   }
@@ -501,6 +532,7 @@ export default function App() {
         </div>
         <GlobalToast message={toastMessage} onDismiss={dismissToast} />
         <BottomNav active={clientTab} onNavigate={handleClientTab} />
+        <AccessibilityWidget />
       </div>
     );
   }
@@ -509,6 +541,7 @@ export default function App() {
     <div className="h-full bg-[#FBF3E9] overflow-hidden">
       {renderScreen()}
       <GlobalToast message={toastMessage} onDismiss={dismissToast} />
+      <AccessibilityWidget />
     </div>
   );
 }

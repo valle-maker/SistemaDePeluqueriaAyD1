@@ -192,3 +192,25 @@ export const adminSetStylistServices = (id: string, serviceIds: string[]) =>
   api<unknown>(`/admin/stylists/${id}/services`, { method: 'PUT', body: { serviceIds } });
 export const adminUpdateStylistProfile = (id: string, body: { photoUrl?: string; rating?: number }) =>
   api<unknown>(`/admin/stylists/${id}/profile`, { method: 'PATCH', body });
+
+// ─── My appointments (HU-14) ─────────────────────────────────────────────────
+
+export interface ApiMyAppointment {
+  id: string;
+  code: string;
+  status: 'CONFIRMADA' | 'COMPLETADA' | 'CANCELADA';
+  serviceId: string;
+  serviceName: string;
+  durationMinutes: number;
+  price: number;
+  stylistId: string;
+  stylistName: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  canManage: boolean;
+}
+
+export const fetchAppointments = (scope: 'upcoming' | 'history') =>
+  api<ApiMyAppointment[]>('/appointments', { query: { scope } });
+export const fetchAppointment = (id: string) => api<ApiMyAppointment>(`/appointments/${id}`);
