@@ -214,3 +214,9 @@ export interface ApiMyAppointment {
 export const fetchAppointments = (scope: 'upcoming' | 'history') =>
   api<ApiMyAppointment[]>('/appointments', { query: { scope } });
 export const fetchAppointment = (id: string) => api<ApiMyAppointment>(`/appointments/${id}`);
+
+// HU-15: cancel / move one of the caller's own active appointments.
+export const cancelAppointmentRequest = (id: string) =>
+  api<ApiMyAppointment>(`/appointments/${id}/cancel`, { method: 'POST' });
+export const rescheduleAppointmentRequest = (id: string, body: { date: string; time: string }) =>
+  api<ApiMyAppointment>(`/appointments/${id}`, { method: 'PATCH', body });

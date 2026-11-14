@@ -4,7 +4,10 @@
 // and if somebody else took it first the backend answers 409 with code SLOT_TAKEN (the screens
 // show the "turno ocupado" dialog). The old simulated hold (reservarTurno / liberarTurno) is gone.
 import { ApiError } from '../api';
-import { createAppointment, fetchAppointment, fetchAppointments, fetchAvailability, fetchMonthAvailability, type ApiMyAppointment } from '../backend';
+import {
+  cancelAppointmentRequest, createAppointment, fetchAppointment, fetchAppointments, fetchAvailability,
+  fetchMonthAvailability, rescheduleAppointmentRequest, type ApiMyAppointment,
+} from '../backend';
 import type { Appointment, AppointmentStatus } from '../data';
 
 export const ANY_STYLIST_ID = 'any';
@@ -186,6 +189,9 @@ export async function getMyAppointment(appointmentId: string): Promise<Appointme
   }
 }
 
+export const MODIFICATION_NOTICE_MESSAGE =
+  'Las modificaciones solo están permitidas con al menos 2 horas de anticipación. Por favor comunícate por teléfono.';
+
 const MINIMUM_NOTICE_MS = 2 * 60 * 60 * 1000; // same rule as the backend (app.booking.min-notice-hours)
 
 export function canManageAppointment(
@@ -196,22 +202,47 @@ export function canManageAppointment(
   return appointment.status === 'confirmed' && startsAt - now >= MINIMUM_NOTICE_MS;
 }
 
-// Cancelling and rescheduling are HU-15: until the backend has those endpoints they only explain it.
-function notAvailableYet(): never {
-  throw new AppointmentActionError('Esta acción estará disponible muy pronto.', 'NOT_AVAILABLE_YET');
+// Cancelling and rescheduling (HU-15). The server enforces everything (ownership, the 2-hour rule,
+// the slot being free); these functions only translate its answers into the errors the screens know.
+function asActionError(error: unknown): never {
+  if (error instanceof ApiError) {
+    if (error.status === 403) throw new AppointmentAccessError(error.message);
+    if (error.status === 409 && error.code === 'CAMBIO_FUERA_DE_PLAZO') {
+      throw new AppointmentActionError(error.message, 'INSUFFICIENT_NOTICE');
+    }
+    if (error.status === 409 && error.code === 'CITA_NO_ACTIVA') {
+      throw new AppointmentActionError(error.message, 'APPOINTMENT_ALREADY_CANCELLED');
+    }
+    if (error.status === 409) throw new BookingServiceError(error.message, 409, error.code ?? 'SLOT_TAKEN');
+  }
+  throw error;
 }
 
-export async function cancelMyAppointment(_appointmentId: string, _userName?: string, _reason?: string): Promise<Appointment> {
-  return notAvailableYet();
+export async function cancelMyAppointment(appointmentId: string, _userName?: string, _reason?: string): Promise<Appointment> {
+  try {
+    return toAppointment(await cancelAppointmentRequest(appointmentId));
+  } catch (error) {
+    return asActionError(error);
+  }
 }
 
-export async function requestAppointmentReschedule(_appointmentId: string): Promise<Appointment> {
-  return notAvailableYet();
+// Checks, before the reschedule flow opens, that the appointment can still be moved.
+export async function requestAppointmentReschedule(appointmentId: string): Promise<Appointment> {
+  const appointment = await getMyAppointment(appointmentId);
+  if (!canManageAppointment(appointment)) {
+    throw new AppointmentActionError(MODIFICATION_NOTICE_MESSAGE, 'INSUFFICIENT_NOTICE');
+  }
+  return appointment;
 }
 
+// Moves the SAME appointment to another slot of its original stylist (no new appointment is made).
 export async function rescheduleMyAppointment(
-  _appointmentId: string,
-  _slot: { date: string; time: string; stylistId: string },
+  appointmentId: string,
+  slot: { date: string; time: string; stylistId?: string },
 ): Promise<Appointment> {
-  return notAvailableYet();
+  try {
+    return toAppointment(await rescheduleAppointmentRequest(appointmentId, { date: slot.date, time: slot.time }));
+  } catch (error) {
+    return asActionError(error);
+  }
 }

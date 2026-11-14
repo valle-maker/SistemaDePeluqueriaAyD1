@@ -2,12 +2,13 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import { getService, getStylist, formatPrice, formatDuration, CATEGORY_CONFIG, STATUS_CONFIG, type Appointment, type Service, type Stylist } from '../data';
 import { StatusBadge, Button, Card, PageHeader, EmptyState } from '../ui';
 import { EmptyAppointmentsIllustration, MemphisStylistAvatar } from '../illustrations';
-import { AppointmentAccessError, AppointmentActionError, canManageAppointment, cancelMyAppointment, getMyAppointment, getMyAppointments, requestAppointmentReschedule } from '../services/bookingService';
+import { AppointmentAccessError, AppointmentActionError, MODIFICATION_NOTICE_MESSAGE, canManageAppointment, cancelMyAppointment, getMyAppointment, getMyAppointments, requestAppointmentReschedule } from '../services/bookingService';
 
 // ─── MY APPOINTMENTS ───────────────────────────────────────────────────────────
 
-export function MyAppointments({ onBook, onRepeatAppointment, onCancel, onBack }: {
+export function MyAppointments({ onBook, onRepeatAppointment, onReschedule, onCancel, onBack }: {
   onBook: () => void;
+  onReschedule?: (appointment: Appointment) => void;
   onRepeatAppointment?: (serviceId: string, stylistId: string) => void;
   onCancel?: (id: string) => void;
   onBack?: () => void;
@@ -99,8 +100,9 @@ export function MyAppointments({ onBook, onRepeatAppointment, onCancel, onBack }
     if (!selectedAppointment) return;
     setActionLoading('reschedule'); setActionError(null);
     try {
-      await requestAppointmentReschedule(selectedAppointment.id);
+      const appointment = await requestAppointmentReschedule(selectedAppointment.id);
       setSelectedAppointment(null);
+      onReschedule?.(appointment);
     } catch (reason) {
       setActionError(getAppointmentActionMessage(reason, 'reschedule'));
     } finally { setActionLoading(null); }
@@ -380,7 +382,7 @@ function isAppointmentFuture(appointment: Pick<Appointment, 'date' | 'time'>, no
 function getAppointmentRestrictionMessage(appointment: Appointment, now = Date.now()): string {
   const startsAt = new Date(`${appointment.date}T${appointment.time}:00-05:00`).getTime();
   if (startsAt <= now) return 'Esta cita ya comenzó o pasó y no se puede gestionar desde la web.';
-  return 'Para cancelar o reprogramar, deben faltar al menos 2 horas. Si falta menos tiempo, comunícate directamente por teléfono con la peluquería.';
+  return MODIFICATION_NOTICE_MESSAGE;
 }
 
 function getAppointmentActionMessage(reason: unknown, action: 'cancel' | 'reschedule'): string {
@@ -493,7 +495,7 @@ function DetailItem({ label, value }: { label: string; value: string }) {
 
 export function AppointmentDetail({ appointmentId, onReschedule, onCancel, onRebook, onBack }: {
   appointmentId: string;
-  onReschedule: (serviceId: string) => void;
+  onReschedule: (appointment: Appointment) => void;
   onCancel: () => void;
   onRebook: (serviceId: string) => void;
   onBack: () => void;
@@ -758,7 +760,7 @@ export function AppointmentDetail({ appointmentId, onReschedule, onCancel, onReb
       <footer aria-label="Acciones de la cita" className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-[#F5E6D3] p-5 pb-safe">
         {isActive ? (
           <div className="flex flex-col gap-2">
-            <Button onClick={() => onReschedule(appointment.serviceId)} variant="secondary" size="lg" fullWidth ariaLabel="Reprogramar esta cita" disabled={!canManage}>
+            <Button onClick={() => onReschedule(appointment)} variant="secondary" size="lg" fullWidth ariaLabel="Reprogramar esta cita" disabled={!canManage}>
               📅 Reprogramar cita
             </Button>
             <Button onClick={onCancel} variant="danger" size="md" fullWidth ariaLabel="Cancelar esta cita" disabled={!canManage}>

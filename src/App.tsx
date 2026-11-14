@@ -185,6 +185,14 @@ export default function App() {
   // ── Navigation helpers ──────────────────────────────────────────────────────
   const nav = (s: Screen) => navigate(SCREEN_TO_PATH[s]);
 
+  // Back at Mis citas the reschedule flow (HU-15) is over: forget the appointment and the slot.
+  useEffect(() => {
+    if (screen === 'my-appointments') {
+      setReschedulingAppointmentId(null);
+      setBooking(INITIAL_BOOKING);
+    }
+  }, [screen]);
+
   // The backend answered 401 to a request that carried our token: the session is over.
   useEffect(() => {
     const onUnauthorized = () => {
@@ -238,16 +246,19 @@ export default function App() {
     nav('book-3');
   };
 
-  const startRescheduling = (appointmentId: string, serviceId: string) => {
-    setSelectedAppointmentId(appointmentId);
-    setReschedulingAppointmentId(appointmentId);
-    setBooking({ ...INITIAL_BOOKING, serviceId });
-    nav('book-2');
+  // HU-15: the new slot is chosen among the free ones of the appointment's ORIGINAL stylist, so the
+  // flow starts at the calendar with that stylist fixed.
+  const startRescheduling = (appointment: { id: string; serviceId: string; stylistId: string }) => {
+    setSelectedAppointmentId(appointment.id);
+    setReschedulingAppointmentId(appointment.id);
+    setReservationCode(null);
+    setBooking({ ...INITIAL_BOOKING, serviceId: appointment.serviceId, stylistId: appointment.stylistId });
+    nav('book-3');
   };
 
   const handleClientTab = (tab: ClientTab) => {
     if (tab === 'home') nav('client-home');
-    else if (tab === 'book') { setBooking(INITIAL_BOOKING); nav('book-1'); }
+    else if (tab === 'book') { setReschedulingAppointmentId(null); setBooking(INITIAL_BOOKING); nav('book-1'); }
     else if (tab === 'appointments') nav('my-appointments');
     else if (tab === 'profile') nav('profile');
   };
@@ -380,7 +391,15 @@ export default function App() {
               setBooking(b => ({ ...b, date, time }));
               nav('book-4');
             }}
-            onBack={() => nav('book-2')}
+            onBack={() => {
+              if (reschedulingAppointmentId) {
+                setReschedulingAppointmentId(null);
+                setBooking(INITIAL_BOOKING);
+                nav('my-appointments');
+              } else {
+                nav('book-2');
+              }
+            }}
           />
         );
 
@@ -394,8 +413,8 @@ export default function App() {
             appointmentId={reschedulingAppointmentId}
             onConfirm={(code, assignedStylistId) => {
               if (reschedulingAppointmentId) {
-                setReschedulingAppointmentId(null);
-                setBooking(INITIAL_BOOKING);
+                // The booking state is cleared once Mis citas is on screen (effect above): clearing
+                // it here would make this very step bounce to the start of the booking flow first.
                 setToastMessage('Cita reprogramada exitosamente');
                 nav('my-appointments');
                 return;
@@ -434,6 +453,7 @@ export default function App() {
           <MyAppointments
             onBook={() => startBooking()}
             onRepeatAppointment={repeatAppointment}
+            onReschedule={startRescheduling}
             onCancel={id => { setSelectedAppointmentId(id); nav('cancel-appointment'); }}
           />
         );
@@ -442,7 +462,7 @@ export default function App() {
         return selectedAppointmentId ? (
           <AppointmentDetail
             appointmentId={selectedAppointmentId}
-            onReschedule={serviceId => startRescheduling(selectedAppointmentId, serviceId)}
+            onReschedule={startRescheduling}
             onCancel={() => nav('cancel-appointment')}
             onRebook={id => startBooking(id)}
             onBack={() => nav('my-appointments')}
