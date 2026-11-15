@@ -220,3 +220,38 @@ export const cancelAppointmentRequest = (id: string) =>
   api<ApiMyAppointment>(`/appointments/${id}/cancel`, { method: 'POST' });
 export const rescheduleAppointmentRequest = (id: string, body: { date: string; time: string }) =>
   api<ApiMyAppointment>(`/appointments/${id}`, { method: 'PATCH', body });
+
+// ─── Admin: manage appointments (HU-20) ──────────────────────────────────────
+
+export interface ApiAdminAppointment {
+  id: string;
+  code: string;
+  status: 'CONFIRMADA' | 'COMPLETADA' | 'CANCELADA';
+  clientName: string;
+  clientEmail: string | null;
+  clientPhone: string | null;
+  serviceId: string;
+  serviceName: string;
+  durationMinutes: number;
+  price: number;
+  stylistId: string;
+  stylistName: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+}
+
+export interface ApiAvailableStylist {
+  id: string;
+  fullName: string;
+  specialty: string;
+}
+
+export const adminListAppointments = (date?: string, stylistId?: string) =>
+  api<ApiAdminAppointment[]>('/admin/appointments', { query: { date, stylistId } });
+export const adminAvailableStylists = (id: string) =>
+  api<ApiAvailableStylist[]>(`/admin/appointments/${id}/available-stylists`);
+export const adminCancelAppointment = (id: string, reason?: string) =>
+  api<ApiAdminAppointment>(`/admin/appointments/${id}/cancel`, { method: 'POST', body: reason ? { reason } : {} });
+export const adminReassignAppointment = (id: string, stylistId: string) =>
+  api<ApiAdminAppointment>(`/admin/appointments/${id}/stylist`, { method: 'PATCH', body: { stylistId } });

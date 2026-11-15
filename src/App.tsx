@@ -25,6 +25,7 @@ import { MyAppointments, AppointmentDetail, CancelAppointment } from './screens/
 
 // Admin
 import { AdminDashboard, AdminTeam, AdminReports } from './screens/Admin';
+import { AdminAppointments } from './screens/AdminAppointments';
 
 // Stylist
 import { StylistSchedule, StylistClients, StylistPerformance } from './screens/Stylist';
@@ -36,12 +37,12 @@ type Screen =
   | 'client-home' | 'service-catalog' | 'service-detail'
   | 'book-1' | 'book-2' | 'book-3' | 'book-4' | 'book-success'
   | 'my-appointments' | 'appointment-detail' | 'cancel-appointment'
-  | 'admin-dashboard' | 'admin-services' | 'admin-team' | 'admin-reports'
+  | 'admin-dashboard' | 'admin-appointments' | 'admin-services' | 'admin-team' | 'admin-reports'
   | 'stylist-schedule' | 'stylist-clients' | 'stylist-reports'
   | 'profile';
 
 type ClientTab = 'home' | 'book' | 'appointments' | 'profile';
-type AdminTab = 'dashboard' | 'services' | 'team' | 'schedule' | 'clients' | 'reports';
+type AdminTab = 'dashboard' | 'appointments' | 'services' | 'team' | 'schedule' | 'clients' | 'reports';
 
 const SCREEN_TO_PATH: Record<Screen, string> = {
   'splash':               '/',
@@ -62,6 +63,7 @@ const SCREEN_TO_PATH: Record<Screen, string> = {
   'cancel-appointment':   '/cliente/citas/cancelar',
   'profile':              '/cliente/perfil',
   'admin-dashboard':      '/admin/dashboard',
+  'admin-appointments':   '/admin/citas',
   'admin-services':       '/admin/servicios',
   'admin-team':           '/admin/equipo',
   'admin-reports':        '/admin/reportes',
@@ -149,6 +151,7 @@ export default function App() {
   // Derive active tab for admin/stylist side nav
   const activeAdminTab: AdminTab = (() => {
     if (role === 'admin') {
+      if (screen === 'admin-appointments') return 'appointments';
       if (screen === 'admin-services') return 'services';
       if (screen === 'admin-team') return 'team';
       if (screen === 'stylist-clients') return 'clients';
@@ -265,6 +268,7 @@ export default function App() {
 
   const handleAdminTab = (tab: AdminTab) => {
     if (tab === 'dashboard') nav('admin-dashboard');
+    else if (tab === 'appointments') nav('admin-appointments');
     else if (tab === 'services') nav('admin-services');
     else if (tab === 'team') nav('admin-team');
     else if (tab === 'clients') nav('stylist-clients');
@@ -484,6 +488,9 @@ export default function App() {
       // ── Admin ──────────────────────────────────────────────────────────────
       case 'admin-dashboard':
         return <AdminDashboard />;
+
+      case 'admin-appointments':
+        return <AdminAppointments />;
 
       case 'admin-services':
         return <AdminServices onBack={() => nav('admin-dashboard')} />;

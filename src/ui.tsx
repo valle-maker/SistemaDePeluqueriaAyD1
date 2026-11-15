@@ -435,7 +435,7 @@ export function BottomNav({ active, onNavigate }: { active: ClientTab; onNavigat
 
 // ─── SIDE NAV ──────────────────────────────────────────────────────────────────
 
-type AdminTab = 'dashboard' | 'services' | 'team' | 'schedule' | 'clients' | 'reports';
+type AdminTab = 'dashboard' | 'appointments' | 'services' | 'team' | 'schedule' | 'clients' | 'reports';
 
 export function SideNav({ active, role, onNavigate, onLogout }: {
   active: AdminTab;
@@ -445,6 +445,7 @@ export function SideNav({ active, role, onNavigate, onLogout }: {
 }) {
   const adminItems: { id: AdminTab; label: string; icon: string }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+    { id: 'appointments', label: 'Citas', icon: '📅' },
     { id: 'services', label: 'Servicios', icon: '✂️' },
     { id: 'team', label: 'Equipo', icon: '👥' },
     { id: 'clients', label: 'Clientes', icon: '👤' },
