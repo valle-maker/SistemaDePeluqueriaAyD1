@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import { getService, getStylist, formatPrice, formatDuration, CATEGORY_CONFIG, STATUS_CONFIG, type Appointment, type Service, type Stylist } from '../data';
 import { StatusBadge, Button, Card, PageHeader, EmptyState } from '../ui';
 import { EmptyAppointmentsIllustration, MemphisStylistAvatar } from '../illustrations';
-import { AppointmentAccessError, AppointmentActionError, MODIFICATION_NOTICE_MESSAGE, canManageAppointment, cancelMyAppointment, getMyAppointment, getMyAppointments, requestAppointmentReschedule } from '../services/bookingService';
+import { AppointmentAccessError, AppointmentActionError, MODIFICATION_NOTICE_MESSAGE, RepeatAppointmentError, canManageAppointment, cancelMyAppointment, getMyAppointment, getMyAppointments, prepareRepeatAppointment, requestAppointmentReschedule } from '../services/bookingService';
 
 // ─── MY APPOINTMENTS ───────────────────────────────────────────────────────────
 
@@ -21,6 +21,9 @@ export function MyAppointments({ onBook, onRepeatAppointment, onReschedule, onCa
   const [error, setError] = useState<'access' | 'generic' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<'cancel' | 'reschedule' | null>(null);
+  // HU-21: the history card whose "Repetir cita" is being prepared, and why one could not be.
+  const [repeatingId, setRepeatingId] = useState<string | null>(null);
+  const [repeatError, setRepeatError] = useState<{ id: string; message: string } | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
 
@@ -94,6 +97,27 @@ export function MyAppointments({ onBook, onRepeatAppointment, onReschedule, onCa
     } catch (reason) {
       setActionError(getAppointmentActionMessage(reason, 'cancel'));
     } finally { setActionLoading(null); }
+  };
+
+  // HU-21: validates the old service and stylist, then opens the booking flow already on the
+  // date and time step with both preselected.
+  const handleRepeat = async (appointment: Appointment) => {
+    if (repeatingId || !onRepeatAppointment) return;
+    setRepeatingId(appointment.id);
+    setRepeatError(null);
+    try {
+      await prepareRepeatAppointment(appointment.serviceId, appointment.stylistId);
+      onRepeatAppointment(appointment.serviceId, appointment.stylistId);
+    } catch (reason) {
+      setRepeatError({
+        id: appointment.id,
+        message: reason instanceof RepeatAppointmentError
+          ? reason.message
+          : 'No pudimos preparar la reserva. Revisa tu conexión e inténtalo de nuevo.',
+      });
+    } finally {
+      setRepeatingId(null);
+    }
   };
 
   const handleReschedule = async () => {
@@ -190,9 +214,12 @@ export function MyAppointments({ onBook, onRepeatAppointment, onReschedule, onCa
                   appointment={appointment}
                   now={currentTimestamp}
                   onClick={() => openDetail(appointment)}
-                  onRepeat={appointment.status === 'completed' && onRepeatAppointment
-                    ? () => onRepeatAppointment(appointment.serviceId, appointment.stylistId)
+                  onRepeat={(appointment.status === 'completed' || appointment.status === 'cancelled') && onRepeatAppointment
+                    ? () => void handleRepeat(appointment)
                     : undefined}
+                  repeatLoading={repeatingId === appointment.id}
+                  repeatDisabled={repeatingId !== null}
+                  repeatError={repeatError?.id === appointment.id ? repeatError.message : null}
                 />
               </li>
             ))}
@@ -249,11 +276,14 @@ function resolveStylist(appointment: Appointment): Stylist {
 
 // ─── APPOINTMENT CARD ──────────────────────────────────────────────────────────
 
-function AppointmentCard({ appointment, now, onClick, onRepeat }: {
+function AppointmentCard({ appointment, now, onClick, onRepeat, repeatLoading = false, repeatDisabled = false, repeatError = null }: {
   appointment: Appointment;
   now: number;
   onClick: () => void;
   onRepeat?: () => void;
+  repeatLoading?: boolean;
+  repeatDisabled?: boolean;
+  repeatError?: string | null;
 }) {
   const service = resolveService(appointment);
   const stylist = resolveStylist(appointment);
@@ -333,9 +363,15 @@ function AppointmentCard({ appointment, now, onClick, onRepeat }: {
               variant="secondary"
               size="sm"
               ariaLabel={`Repetir cita de ${service.name} con ${stylist.name}`}
+              disabled={repeatDisabled}
+              ariaBusy={repeatLoading}
             >
-              Repetir cita
+              {repeatLoading ? <><ActionSpinner /> Preparando tu reserva...</> : 'Repetir cita'}
             </Button>
+            {repeatLoading && <p className="sr-only" role="status" aria-live="polite">Preparando tu reserva con el mismo servicio y estilista.</p>}
+            {repeatError && (
+              <p role="alert" className="mt-3 rounded-xl bg-[#FFF5F5] p-3 text-sm font-semibold text-[#7C2C20]">{repeatError}</p>
+            )}
           </div>
         )}
       </div>

@@ -6,7 +6,7 @@
 import { ApiError } from '../api';
 import {
   cancelAppointmentRequest, createAppointment, fetchAppointment, fetchAppointments, fetchAvailability,
-  fetchMonthAvailability, rescheduleAppointmentRequest, type ApiMyAppointment,
+  fetchMonthAvailability, fetchServices, fetchStylists, rescheduleAppointmentRequest, type ApiMyAppointment,
 } from '../backend';
 import type { Appointment, AppointmentStatus } from '../data';
 
@@ -244,5 +244,26 @@ export async function rescheduleMyAppointment(
     return toAppointment(await rescheduleAppointmentRequest(appointmentId, { date: slot.date, time: slot.time }));
   } catch (error) {
     return asActionError(error);
+  }
+}
+
+// ─── Repeat an appointment (HU-21) ───────────────────────────────────────────
+
+export class RepeatAppointmentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RepeatAppointmentError';
+  }
+}
+
+// Before the booking flow opens with the old service and stylist, asks the server whether both are
+// still bookable: the service may have been deactivated, or the stylist may no longer do it.
+export async function prepareRepeatAppointment(serviceId: string, stylistId: string): Promise<void> {
+  const [services, stylists] = await Promise.all([fetchServices(), fetchStylists(serviceId)]);
+  if (!services.some(service => service.id === serviceId)) {
+    throw new RepeatAppointmentError('Este servicio ya no está disponible. Puedes elegir otro desde Reservar.');
+  }
+  if (!stylists.some(stylist => stylist.id === stylistId)) {
+    throw new RepeatAppointmentError('Este barbero ya no ofrece ese servicio. Puedes elegir otro desde Reservar.');
   }
 }
